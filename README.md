@@ -29,6 +29,3 @@ A first basic tour using data from Lorenz '63, can be found in `basic_tour.ipynb
 
 ## To Do
 ...
-
-Best,
-Florian
