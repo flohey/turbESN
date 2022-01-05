@@ -8,10 +8,10 @@ Supports fully autonomous and teacher forced ESN predictions. A hybrid of both m
 
 ## Requirements
 Stable for
-- `python` >=3.6.0
-- `torch` >=.1.8.1
-- `numpy` >=.1.20.1
-- `h5py`  >=.2.10.0 
+- `python`$\ge$ 3.6.0
+- `torch` $\ge$ 1.8.1
+- `numpy` $\ge$ 1.20.1
+- `h5py`  $\ge$ 2.10.0 
 
 ## Files
 TO DO
