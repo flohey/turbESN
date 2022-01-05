@@ -1,5 +1,5 @@
 #turbESN
-from util import (
+from .util import (
     SaveStudy, 
     RunturbESN,
     ComputeWassersteinDistance
