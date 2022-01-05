@@ -23,15 +23,15 @@ import torch
 #Data structure
 import h5py
 
-from util import (
+from turbESN.util import (
     PreparePredictorData,   
     InitStudyOrder,
     CreateHDF5Groups, 
     InitRandomSearchStudyOrder
     )
 
-from core import *
-from study import LaunchSingleThread, LaunchThreads, Callback
+from turbESN.core import *
+from turbESN.study import LaunchSingleThread, LaunchThreads, Callback
 
 
 from sklearn.preprocessing import minmax_scale
