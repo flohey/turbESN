@@ -6,7 +6,7 @@ import torch
 import h5py 
 
 #turbESN
-from core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _LOGGING_FORMAT)
+from .core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _LOGGING_FORMAT)
 
 #misc
 import sys
