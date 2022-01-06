@@ -5,7 +5,7 @@ from .util import (
     ComputeWassersteinDistance
     )
 
-from core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _LOGGING_FORMAT)
+from .core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _LOGGING_FORMAT)
 
 #Parallelization
 import multiprocessing as mp
@@ -16,6 +16,8 @@ import sys
 import os
 import time
 from copy import deepcopy
+from typing import Union, Tuple, List
+import logging
 
 #Backends
 import numpy as np
@@ -130,7 +132,7 @@ def Callback(callback_args):
     esn_id, study_results, nstudy, filepath_esn = callback_args
 
     if esn_id % _ID_PRINT == 0:
-        logging.warn('ID {0}: returning to main process for saving.'.format(esn_id))
+        logging.debug('ID {0}: returning to main process for saving.'.format(esn_id))
 
     for ii in range(nstudy):
         istudy, mse_train, mse_test, y_pred, study_dict= study_results[ii] 
