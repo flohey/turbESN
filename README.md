@@ -17,6 +17,8 @@ Stable for
 ## Manual
 A first basic introduction can be found in the notbeook`basic_tour.ipynb`.  This example uses data from the Lorenz '63 system (https://en.wikipedia.org/wiki/Lorenz_system).
 
+## About Echo State Networks/ Reservoir Computing
+TO DO
 
 ## Applications:
 - F. Heyder and J. Schumacher - Phys. Rev. E **103**, 053107:
