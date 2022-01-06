@@ -4,7 +4,7 @@ Echo State Network code (used in parts of the DeepTurb project of Carl-Zeiss-Sti
 Supports fully autonomous and teacher forced ESN predictions. A hybrid of both methods, called semi-techer forcing, is also implemented (restricted use).
 
 ## Installation
-`pip3 install turbESN`
+In order to install the package just use `pip3 install turbESN`. Here you can find the current PyPi release https://pypi.org/project/turbESN/.
 
 ## Requirements
 Stable for
@@ -13,11 +13,9 @@ Stable for
 - `numpy`  >= 1.20.1
 - `h5py`   >= 2.10.0 
 
-## Files
-TO DO
 
 ## Manual
-A first basic tour using data from Lorenz '63, can be found in `basic_tour.ipynb` (TO DO)
+A first basic introduction can be found in the notbeook`basic_tour.ipynb`.  This example uses data from the Lorenz '63 system (https://en.wikipedia.org/wiki/Lorenz_system).
 
 
 ## Applications:
