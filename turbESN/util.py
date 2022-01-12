@@ -293,7 +293,7 @@ def ComputeMSE(y_test: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
     if y_pred.dtype is not _DTYPE:
         y_pred = torch.as_tensor(y_pred, dtype = _DTYPE)
             
-    return torch.mean((y_test-y_pred)**2, dim = 1)
+    return torch.mean((y_test-y_pred)**2, dim = 0)
 #--------------------------------------------------------------------------
 def ComputeR2(y_test: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
     '''
