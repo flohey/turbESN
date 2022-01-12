@@ -200,19 +200,19 @@ def RunturbESN(esn, u_train: Union[np.ndarray, torch.Tensor] = None,
 
     if None not in [u_train, y_train, y_test]:
         for data in [u_train, y_train]:
-            if esn.trainingLength == data.shape[0]:
+            if esn.trainingLength != data.shape[0]:
                 logging.error('Training input/output time dimension ({0}) does not match ESN trainingLength ({1}).'.format(data.shape[0],esn.trainingLength))
 
 
     if y_test is not None:
-        if esn.testingLength == y_test.shape[0]:
+        if esn.testingLength != y_test.shape[0]:
             logging.error('Testing Output time dimension ({0}) does not match ESN testingLength ({1}).'.format(y_test.shape[0],esn.testingLength))
 
 
     if esn.mode != _ESN_MODES[0]:
         assert u_test is not None or esn.u_test is not None, "Error: u_test not specified"
         if u_test is not None:
-            if esn.testingLength == u_test.shape[0]:
+            if esn.testingLength != u_test.shape[0]:
                 logging.error('Testing input time dimension ({0}) does not match ESN testingLength ({1}).'.format(u_test.shape[0],esn.testingLength))
 
 
