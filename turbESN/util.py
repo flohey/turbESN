@@ -6,7 +6,7 @@ import torch
 import h5py 
 
 #turbESN
-from .core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _LOGGING_FORMAT)
+from .core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT)
 
 #misc
 import sys
@@ -517,12 +517,8 @@ def ReadStudy(filepath: str, study_parameters: Union[list,tuple], nstudy: int = 
                 study_dict = {}
                 G_study = G_esn_id.get(str(istudy))
 
-                if mse_is_array:                                                         #20.10.21: if mse was saved as array, this can now be read
-                    mse_train.append(np.array(G_study.get('mse_train')))
-                    mse_train.append(np.array(G_study.get('mse_test')))
-                else:
-                    mse_train.append(G_study.attrs['mse_train'])
-                    mse_test.append(G_study.attrs['mse_test'])
+                mse_train.append(np.array(G_study.get('mse_train')))
+                mse_train.append(np.array(G_study.get('mse_test')))
 
                 if read_pred:
                     y_pred.append(np.array(G_study.get('y_pred')))
@@ -559,14 +555,11 @@ def ReadStudy(filepath: str, study_parameters: Union[list,tuple], nstudy: int = 
                             study_dict[name] = G_study.attrs[name]
                         study_dicts.append(study_dict)
             
-                    if mse_is_array:
-                        MSE_train.append(np.array(G_study.get('mse_train')))
-                        MSE_test.append(np.array(G_study.get('mse_test')))
-                    else: 
-                        MSE_train.append(G_study.attrs['mse_train'])
-                        MSE_test.append(G_study.attrs['mse_test'])
+                    MSE_train.append(np.array(G_study.get('mse_train')))
+                    MSE_test.append(np.array(G_study.get('mse_test')))
 
-                    if readPred:
+
+                    if read_pred:
                         Y_pred.append(np.array(G_study.get('y_pred')))
 
                 mse_train.append(MSE_train)
