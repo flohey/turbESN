@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import networkx as nx
 import sys
 import h5py 
 from typing import Union, Tuple, List
@@ -10,6 +11,7 @@ _DTYPE = torch.float32
 _DEVICE = torch.device('cpu')                      
 _ESN_MODES = ('auto', 'teacher', 'semi-teacher')   # prediction modes 
 _WEIGTH_GENERATION = ('uniform', 'normal')         # random weight generation
+_EXTENDED_STATE_STYLES = ('default', 'square')    # layout of extended state 
 _LOGGING_FORMAT = '%(asctime)s %(threadName)s %(levelname)s: %(message)s'
 
 class ESN:
@@ -39,7 +41,10 @@ class ESN:
                 noiseLevel_out: float = 0.0,
                 mode: str = "auto",
                 weightGeneration: str = "uniform",
+                extendedStateStyle: str = "default",
                 transientTime: int = 50,
+                use_watts_strogatz_reservoir: bool = False,
+                ws_p: float = 0.2,
                 verbose: bool = False):
 
 
@@ -55,6 +60,9 @@ class ESN:
         assert mode in _ESN_MODES,'Error: unkown mode {0}. Choices {1}'.format(mode, _ESN_MODES)
         self.mode = mode                                             # prediction mode (auto - autonmous prediction, teacher - teacher forced)
         logging.info('ESN mode is ' + self.mode + '\n')
+
+        assert extendedStateStyle in _EXTENDED_STATE_STYLES,'Error: unkown extended state style {0}. Choices {1}'.format(extendedStateStyle, _EXTENDED_STATE_STYLES)
+        self.extendedStateStyle = extendedStateStyle        
         
         ESN._ID_COUNTER +=1
         self.id = ESN._ID_COUNTER                                    #reservoir instance ID. Used for logging to keep track of multiple processes.
@@ -70,7 +78,13 @@ class ESN:
         self.n_input = int(n_input)                                  #input data dimensions
         self.n_output = int(n_output)                                #output data dimensions
         self.n_reservoir = int(n_reservoir)                          #dimensions of reservoir state and W with shape (n_reservoir, n_reservoir)
-        self.srows = int(1+n_reservoir+n_input)                      #dim of state matrix: (srows,timesteps). srows = bias + reservoir nodes + n_input
+        
+        
+        if self.extendedStateStyle == _EXTENDED_STATE_STYLES[0]:
+            self.xrows = int(1+n_reservoir+n_input)                  #dim of extended reservoir state: (xrows,timesteps). xrows = bias + n_reservoir + n_reservoir
+        else:
+            self.xrows = int(1+2*n_reservoir)                        #dim of extended reservoir state: (xrows,timesteps). xrows = bias + n_reservoir + n_reservoir
+
         self.leakingRate = leakingRate                               #factor controlling the leaky integrator formulation (1 -> fully nonlinear, 0 -> fully linear)
         self.spectralRadius = spectralRadius                         #maximum absolute eigenvalue of W
         self.reservoirDensity = reservoirDensity                     #fraction of non-zero elements of W
@@ -85,6 +99,8 @@ class ESN:
 
         assert weightGeneration in _WEIGTH_GENERATION,'Error: unkown weightGeneration {0}. Choices {1}'.format(weightGeneration, _WEIGTH_GENERATION)
         self.weightGeneration = weightGeneration                     #method the random weights Win, W should be initialized.
+        self.use_watts_strogatz_reservoir = use_watts_strogatz_reservoir   #whether reservoir matrix is given by Watts-Strogatz network (for small ws_p --> small world network)
+        self.ws_p = ws_p                                             #rewiring probability for the Watts-Strogatz reservoir 
         self.transientTime = transientTime                           #washout length for reservoir states
 
 
@@ -146,10 +162,15 @@ class ESN:
  
         #prevent all-zero eigenvals 
         if self.reservoirDensity >= 1e-6 and self.spectralRadius != 0.0:
+
             #adjust reservoir density
-            _mask = torch.rand(self.n_reservoir, self.n_reservoir, dtype = _DTYPE, device = self.device) > self.reservoirDensity
-            self.Wres[_mask] = 0.0
+            if self.use_watts_strogatz_reservoir:
+                ws_k = int(self.reservoirDensity*self.n_reservoir)
+                _mask = torch.tensor(nx.to_numpy_array(nx.watts_strogatz_graph(self.n_reservoir,ws_k,self.ws_p)),dtype = int)
+            else:
+                _mask = torch.rand(self.n_reservoir, self.n_reservoir, dtype = _DTYPE, device = self.device) > self.reservoirDensity
         
+            self.Wres[_mask] = 0.0
             _eig_norm = torch.abs(torch.linalg.eigvals(self.Wres))
             self.Wres *= self.spectralRadius / torch.max(_eig_norm)
         else:
@@ -243,15 +264,21 @@ class ESN:
         input_timesteps = u.shape[0]
 
         # state matrix
-        X = torch.zeros((1 + self.n_input + self.n_reservoir, input_timesteps - transientTime), device = self.device, dtype = _DTYPE)
+        X = torch.zeros((self.xrows, input_timesteps - transientTime), device = self.device, dtype = _DTYPE)
         
         for t in range(input_timesteps):
             self.update(u[t], x = x)
             
             if t >= transientTime:
-                X[:, t - transientTime] = torch.vstack(
-                    (torch.tensor(self.bias_out, device = self.device, dtype = _DTYPE), self.outputInputScaling * u[t].reshape(self.n_input,1), x)
-                )[:, 0]
+                
+                if self.extendedStateStyle == _EXTENDED_STATE_STYLES[0]:
+                    X[:, t - transientTime] = torch.vstack(
+                        (torch.tensor(self.bias_out, device = self.device, dtype = _DTYPE), self.outputInputScaling * u[t].reshape(self.n_input,1), x)
+                    )[:, 0]
+                else:
+                    X[:, t - transientTime] = torch.vstack(
+                        (torch.tensor(self.bias_out, device = self.device, dtype = _DTYPE), x, x**2)
+                    )[:, 0]
         return X
 #--------------------------------------------------------------------------
     def verifyReservoirConvergence(self, u: torch.Tensor, transientTimeCalculationEpsilon: float = 1e-3, transientTimeCalculationLength: int = 20 ):
@@ -302,13 +329,28 @@ class ESN:
             X - reservoir state matrix
             y - target training output
         '''
-       
-        #TO DO: add fitting to [x, x**2] as additional nonlinearty --> add solver variable
 
         logging.debug('Fitting output matrix')
         assert X.shape[1] == y.shape[0], "Time dimension of X ({0}) does not match time dimension of y ({1}).\nDid you forget to exclude the transientTime of y? ".format(X.shape[1], y.shape[0])
         
-        self.Wout = torch.matmul(torch.matmul(y.T,X.T), torch.inverse(X@X.T + self.regressionParameter*torch.eye(self.srows, device = self.device)))
+        self.Wout = torch.matmul(torch.matmul(y.T,X.T), torch.inverse(X@X.T + self.regressionParameter*torch.eye(self.xrows, device = self.device)))
+
+#--------------------------------------------------------------------------
+    def fetch_state(self, X: torch.Tensor) -> torch.Tensor:
+        '''
+        Fetches reservoir state from extended reserovir state, depending on the extended reservoir state layout.
+
+        INPUT:
+            X - extended reservoir state
+
+        RETURN:
+            reservoir state
+
+        '''
+        if self.extendedStateStyle == _EXTENDED_STATE_STYLES[0]:
+            return X[int(1+self.n_input):].reshape(self.n_reservoir,1)
+        else:
+            return X[1:int(self.n_reservoir+1)].reshape(self.n_reservoir,1)
 
 #--------------------------------------------------------------------------
     def predict(self, X: torch.Tensor, testingLength: int) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -331,21 +373,21 @@ class ESN:
 
         if self.pred_init_input is None:
             logging.error('Error in predict: Initial prediction input is not defined! Returning default values for (y_pred, X_pred).')
-            return torch.zeros((testingLength, self.n_output)), torch.zeros((self.srows, testingLength))
+            return torch.zeros((testingLength, self.n_output)), torch.zeros((self.xrows, testingLength))
 
         y_pred = torch.zeros([self.n_output,testingLength], device = self.device, dtype = _DTYPE) 
-        X_pred = torch.zeros([self.srows, testingLength], device = self.device, dtype = _DTYPE)
+        X_pred = torch.zeros([self.xrows, testingLength], device = self.device, dtype = _DTYPE)
         pred_input = self.pred_init_input
-        x = X[:,-1].reshape(self.srows,)
+        x = X[:,-1].reshape(self.xrows,)
 
         for it in range(testingLength):
-            x_in = x[(1+self.n_input):].reshape(self.n_reservoir,1)
+            x_in = self.fetch_state(x)
             x = self.propagate(pred_input.reshape(1,self.n_input),x = x_in)      #state at time it
             
             pred_output = self.Wout@x                               #reservoir output at time it    
 
             y_pred[:,it] = pred_output.reshape(self.n_output,)
-            X_pred[:,it] = x.reshape(self.srows,)
+            X_pred[:,it] = x.reshape(self.xrows,)
             
             pred_input = pred_output                             #new input is the current output
 
@@ -372,15 +414,15 @@ class ESN:
         logging.debug('Predicting output')
             
         y_pred = torch.zeros((self.n_output,testingLength), device = self.device, dtype = _DTYPE) 
-        X_pred = torch.zeros((self.srows, testingLength), device = self.device, dtype = _DTYPE)
-        x = X[:,-1].reshape(self.srows,)
+        X_pred = torch.zeros((self.xrows, testingLength), device = self.device, dtype = _DTYPE)
+        x = X[:,-1].reshape(self.xrows,)
 
         #compute reservoir states
         for it in range(testingLength):
-            x_in = x[(1+self.n_input):].reshape(self.n_reservoir,1)
+            x_in = self.fetch_state(x)
             x = self.propagate(self.u_test[it].reshape(1,self.n_input),x = x_in)      #state at time it
 
-            X_pred[:,it] = x.reshape(self.srows,)
+            X_pred[:,it] = x.reshape(self.xrows,)
 
         #compute reservoir outputs
         y_pred = self.Wout@X_pred                                                     
@@ -411,8 +453,8 @@ class ESN:
         logging.debug('Predicting output')
 
         y_pred = torch.zeros([self.n_output,testingLength], device = self.device, dtype = _DTYPE) 
-        X_pred = torch.zeros([self.srows, testingLength], device = self.device, dtype = _DTYPE)
-        x = X[:,-1].reshape(self.srows,)
+        X_pred = torch.zeros([self.xrows, testingLength], device = self.device, dtype = _DTYPE)
+        x = X[:,-1].reshape(self.xrows,)
 
 
         def construct_input(index_list_auto, index_list_teacher, u_auto, u_teacher):
@@ -437,12 +479,12 @@ class ESN:
             u_test = self.u_test[it]                 # teacher part of prediction: used as part of new input
             u_merged = construct_input(index_list_auto, index_list_teacher, u_auto, u_test)
         
-            x_in = x[(1+self.n_input):].reshape(self.n_reservoir,1)
+            x_in = self.fetch_state(x)
             x = self.propagate(u_merged.reshape(1,self.n_input),x = x_in)      #state at time it
 
             pred_output = self.Wout@x  
             y_pred[:,it] = pred_output.reshape(self.n_output,)
-            X_pred[:,it] = x.reshape(self.srows,)
+            X_pred[:,it] = x.reshape(self.xrows,)
 
             pred_input = pred_output
 
@@ -522,7 +564,11 @@ class ESN:
             self.n_output = n_output
         else:
             self.n_output = self.n_input 
-        self.srows = int(1+self.n_reservoir+self.n_input)           #adjust srows as according to changed n_input
+        
+        #adjust xrows as according to changed n_input
+        if self.extendedStateStyle == _EXNTENDED_STATE_STYLES[0]:
+            self.xrows = int(1+self.n_reservoir+self.n_input)          
+        
         study_dict['n_input'] = n_input
      #--------------------------------------------------------------------------
     def SetNReservoir(self,n_reservoir: int, study_dict: dict = {}):
@@ -530,7 +576,13 @@ class ESN:
         logging.debug(f'Setting n_reservoir {n_reservoir}')
         
         self.n_reservoir = n_reservoir
-        self.srows = int(1+self.n_reservoir+self.n_input)           #adjust srows as according to changed n_reservoir
+
+        #adjust xrows as according to changed n_reservoir
+        if self.extendedStateStyle == _EXNTENDED_STATE_STYLES[0]:
+            self.xrows = int(1+self.n_reservoir+self.n_input)           
+        else:
+            self.xrows = int(1+2*self.n_reservoir)
+
         study_dict['n_reservoir'] = n_reservoir
 
     #--------------------------------------------------------------------------
@@ -786,8 +838,9 @@ class ESN:
         G_hp.attrs['noiseLevel_out'] = self.noiseLevel_out
         G_hp.attrs['inputScaling'] = self.inputScaling               
         G_hp.attrs['inputDensity'] = self.inputDensity
-        G_hp.attrs['weightGeneration'] = self.weightGeneration    
-        G_hp.attrs['bias_in'] = self.bias_out
+        G_hp.attrs['weightGeneration'] = self.weightGeneration  
+        G_hp.attrs['extendedStateStyle'] = self.extendedStateStyle  
+        G_hp.attrs['bias_in'] = self.bias_in
         G_hp.attrs['bias_out'] = self.bias_out
         G_hp.attrs['outputInputScaling'] = self.outputInputScaling
         G_hp.attrs['esn_start'] = self.esn_start
@@ -854,7 +907,7 @@ class ESN:
         repr += "noise level inside activation function = " + "{0:.2e}\n".format(self.noiseLevel_in)
         repr += "noise level outside activation function = " + "{0:.2e}\n".format(self.noiseLevel_out)
 
-        repr += "transientTime = " + {0}.format(self.transientTime)
+        repr += "transientTime = " + "{0}".format(self.transientTime)
         
         return repr
 
@@ -902,6 +955,8 @@ class ESN:
             inputDensity            = G_hp.attrs['inputDensity']
             randomSeed              = G_hp.attrs['randomSeed']
             weightGeneration        = G_hp.attrs['weightGeneration']
+            extendedStateStyle      = G_hp.attrs['extendedStateStyle']
+            
             bias_in                 = G_hp.attrs['bias_in']
             bias_out                = G_hp.attrs['bias_out']
             outputInputScaling                 = G_hp.attrs['outputInputScaling']
@@ -944,6 +999,7 @@ class ESN:
                     mode = mode,
                     weightGeneration = weightGeneration,
                     transientTime = transientTime,
+                    extendedStateStyle = extendedStateStyle,
                     verbose = False
                 )
             
@@ -1027,6 +1083,7 @@ class ESN:
                     noiseLevel_out = 0.0,
                     mode = mode,
                     weightGeneration = "uniform",
+                    extendedStateStyle = 'default',
                     transientTime = 50,
                     verbose = verbose
                 )
@@ -1073,6 +1130,7 @@ class ESN:
                     noiseLevel_out = 0.0,
                     mode = mode,
                     weightGeneration = "uniform",
+                    extendedStateStyle = 'default',
                     transientTime = 44,
                     verbose = verbose
                 )
@@ -1102,7 +1160,7 @@ class ESN:
         #TO DO: s_pred with nans could happen before
         
         arg_res = self.Wres@X_pred[int(1+self.n_input):,:]
-        arg_input = self.Win@torch.cat((torch.ones((1,self.srows), device = self.device, dtype = _DTYPE),self.Wout ),dim = 0)@X_pred
+        arg_input = self.Win@torch.cat((torch.ones((1,self.xrows), device = self.device, dtype = _DTYPE),self.Wout ),dim = 0)@X_pred
            
         hist_res, _ = np.histogram(arg_res.flatten(), bins = bins_res)
         hist_input, _  = np.histogram(arg_input.flatten(), bins = bins_input)
