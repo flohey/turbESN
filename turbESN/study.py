@@ -5,7 +5,7 @@ from .util import (
     ComputeWassersteinDistance
     )
 
-from .core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _LOGGING_FORMAT)
+from .core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT)
 
 #Parallelization
 import multiprocessing as mp
