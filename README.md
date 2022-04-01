@@ -26,7 +26,7 @@ TO DO
   "Echo state network for two-dimensional turbulent moist Rayleigh-Bénard convection"
   
 - F. Heyder and J. P. Mellado and J. Schumacher - arXiv:2108.06195: 
-  "Two-dimensional convective boundary layer: Numerical analysis and echo state network model"
+  "Echo state network models of a two-dimensional convective boundary layer "
 
 ## To Do
 ...
