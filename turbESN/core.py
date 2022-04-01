@@ -24,6 +24,7 @@ class ESN:
                 esn_end: int,
                 trainingLength: int, 
                 testingLength: int,
+                validationLength: int,
                 data_timesteps: int,
                 n_input: int,
                 n_output: int,
@@ -72,7 +73,8 @@ class ESN:
                                                                      #Note that the training input u_train will therefore begin at the index esn_start-1. Therefore esn_start can not be 0!
         self.esn_end = esn_end                                       #Index of the original data, at which the testing/validation output y_test will end.
         self.trainingLength = trainingLength                         #no. time steps for the training data set
-        self.testingLength = testingLength                           #no. time stes for the testing/validation data set
+        self.testingLength = testingLength                           #no. time stes for the testing data set
+        self.validationLength = validationLength                     #no. time stes for the validation data set
         self.data_timesteps = data_timesteps                         #no. time steps the orignal data has/should have
         self.esn_timesteps = trainingLength + testingLength          #no. total resulting time steps for the esn 
         self.n_input = int(n_input)                                  #input data dimensions
@@ -108,8 +110,11 @@ class ESN:
         self.u_train = None
         self.y_test  = None
         self.u_test  = None
+        self.y_val  = None
+        self.u_val  = None
+        
         self.pred_init_input = None
-
+        self.val_init_input = None
 
 
 #--------------------------------------------------------------------------     
@@ -333,7 +338,10 @@ class ESN:
         logging.debug('Fitting output matrix')
         assert X.shape[1] == y.shape[0], "Time dimension of X ({0}) does not match time dimension of y ({1}).\nDid you forget to exclude the transientTime of y? ".format(X.shape[1], y.shape[0])
         
-        self.Wout = torch.matmul(torch.matmul(y.T,X.T), torch.inverse(X@X.T + self.regressionParameter*torch.eye(self.xrows, device = self.device)))
+        I = torch.eye(self.xrows, device = self.device)
+        I[0,0] = 0  #do not include bias term in regularization, see Lukosevicius et al. Cogn. Comp. (2021) p.2
+
+        self.Wout = torch.matmul(torch.matmul(y.T,X.T), torch.inverse(X@X.T + self.regressionParameter*I))
 
 #--------------------------------------------------------------------------
     def fetch_state(self, X: torch.Tensor) -> torch.Tensor:
@@ -353,16 +361,17 @@ class ESN:
             return X[1:int(self.n_reservoir+1)].reshape(self.n_reservoir,1)
 
 #--------------------------------------------------------------------------
-    def predict(self, X: torch.Tensor, testingLength: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def predict(self, X: torch.Tensor, testingLength: int, init_input:torch.Tensor=None) -> Tuple[torch.Tensor, torch.Tensor]:
         '''
         Used in mode = auto. 
 
         Autonomous prediction mode of the reservoir. Starting from the last state of the training state matrix X and specified
-        initial testing input pred_init_input. The reservoir feeds its last output back to the input layer.
+        initial input init_input. If init_input not specified, rely on self.pred_init_input. The reservoir feeds its last output back to the input layer.
 
         INPUT:
             X             - state matrix (from which the last state will be taken as starting point) 
             testingLength - number of iterations of the prediction phase
+            init_input    - initial input to the ESN from which autonom. prediction will start. 
 
         RETURN:
             y_pred - reservoir output (predictions)
@@ -371,9 +380,10 @@ class ESN:
         
         logging.debug('Predicting output')
 
-        if self.pred_init_input is None:
-            logging.error('Error in predict: Initial prediction input is not defined! Returning default values for (y_pred, X_pred).')
-            return torch.zeros((testingLength, self.n_output)), torch.zeros((self.xrows, testingLength))
+        if init_input is None:
+            if self.pred_init_input is None:
+                logging.error('Error in predict: Initial prediction input is not defined! Returning default values for (y_pred, X_pred).')
+                return torch.zeros((testingLength, self.n_output)), torch.zeros((self.xrows, testingLength))
 
         y_pred = torch.zeros([self.n_output,testingLength], device = self.device, dtype = _DTYPE) 
         X_pred = torch.zeros([self.xrows, testingLength], device = self.device, dtype = _DTYPE)
@@ -497,8 +507,8 @@ class ESN:
 #  HYPERPARAMETER SETTERS
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
-#FH 01/02/2021: Added Setter Functions
-
+    
+    #FH 01/02/2021: Added SetTrainingData & SetTestingData
     #--------------------------------------------------------------------------
     def SetTrainingData(self, u_train: torch.Tensor, y_train: torch.Tensor):
         
@@ -539,6 +549,22 @@ class ESN:
                 self.pred_init_input = pred_init_input
 
                 #TO DO: pred_init_input has len n_input. The teacher part of it is not used (see self.semiteacherforce).
+
+    #--------------------------------------------------------------------------
+    # FH 30.03.2022: Added Validation Datset
+    def SetValidationData(self, y_val: torch.Tensor, u_val: torch.Tensor = None, val_init_input: torch.Tensor = None,):   
+
+        assert y_val.shape[1] == self.n_output,'Validation output dimension ({0}) does not match ESN n_output ({1}).\n'.format(y_val.shape[1], self.n_output)
+    
+        self.u_val = u_val
+        self.y_val = y_val
+
+        if self.mode == 'auto':
+
+            if val_init_input is not None:
+                self.val_init_input = val_init_input
+            else:
+                self.val_init_input = None
 
     #--------------------------------------------------------------------------
     #FH 14/11/2021: Added logging 
@@ -812,7 +838,7 @@ class ESN:
         '''
         
         toClose = False
-        logging.warn('Saving to Hdf5 file {0}'.format(filepath))
+        logging.warn('Saving ESN parameters to Hdf5 file {0}'.format(filepath))
 
         if f is None:
             f = h5py.File(filepath, 'w')
@@ -827,6 +853,7 @@ class ESN:
         G_hp.attrs['data_timesteps'] = self.data_timesteps
         G_hp.attrs['trainingLength'] = self.trainingLength
         G_hp.attrs['testingLength'] = self.testingLength
+        G_hp.attrs['validationLength'] = self.validationLength
         G_hp.attrs['n_input'] = self.n_input
         G_hp.attrs['n_output']= self.n_output
         G_hp.attrs['n_reservoir'] = self.n_reservoir
@@ -852,13 +879,18 @@ class ESN:
         
         G_data = f.create_group('Data')
         #Datasets
-        G_data.create_dataset('y_train',   data = self.y_train, compression = 'gzip', compression_opts = 9)
-        G_data.create_dataset('y_test',    data = self.y_test, compression = 'gzip', compression_opts = 9)
-        G_data.create_dataset('u_train',   data = self.u_train, compression = 'gzip', compression_opts = 9)
-        try:
-            G_hp.create_dataset('u_test',   data = self.u_train, compression = 'gzip', compression_opts = 9)
-        except:
-            pass
+        if self.u_train is not None:
+            G_data.create_dataset('u_test',   data = self.u_train, compression = 'gzip', compression_opts = 9)
+        if self.y_train is not None:
+            G_data.create_dataset('u_test',   data = self.y_train, compression = 'gzip', compression_opts = 9)
+        if self.u_test is not None:
+            G_data.create_dataset('u_test',   data = self.u_test, compression = 'gzip', compression_opts = 9)
+        if self.y_test is not None:
+            G_data.create_dataset('y_test',   data = self.y_test, compression = 'gzip', compression_opts = 9)
+        if self.u_val is not None:
+            G_data.create_dataset('u_val',   data = self.u_val, compression = 'gzip', compression_opts = 9)
+        if self.y_val is not None:
+            G_data.create_dataset('y_val',   data = self.y_val, compression = 'gzip', compression_opts = 9)
 
         if toClose:
             f.close()
@@ -995,7 +1027,7 @@ class ESN:
                     inputScaling = inputScaling,
                     inputDensity = inputDensity,
                     noiseLevel_in = noiseLevel_in,
-                    noiseLevel_out = noiseLevel_out,
+                    noiseLevel_out = noiseLevel_outG_hp,
                     mode = mode,
                     weightGeneration = weightGeneration,
                     transientTime = transientTime,
@@ -1096,6 +1128,7 @@ class ESN:
                      data_timesteps: int = 5000, 
                      trainingLength: int = 2059, 
                      testingLength: int = 1444, 
+                     validationLength: int = 1444,
                      mode: str = 'auto', 
                      verbose: bool = False):
         '''
@@ -1113,6 +1146,7 @@ class ESN:
                     esn_end = esn_end,
                     trainingLength =trainingLength, 
                     testingLength = testingLength,
+                    validationLength = validationLength,
                     data_timesteps = data_timesteps,
                     n_input = 300,
                     n_output = 300,
