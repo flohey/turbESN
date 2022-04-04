@@ -114,7 +114,7 @@ if __name__ == '__main__':
     esn.SetNInputOutput(n_input_data)
     esn.SetNReservoir(n_reservoir)
 
-    u_train, y_train, u_test, y_test, u_val, u_test = PreparePredictorData(data, 
+    u_train, y_train, u_test, y_test, u_val, y_val = PreparePredictorData(data, 
                                                             n_input=esn.n_input, 
                                                             trainingLength=esn.trainingLength, 
                                                             testingLength=esn.testingLength, 
