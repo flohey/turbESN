@@ -875,6 +875,8 @@ class ESN:
         G_hp.attrs['randomSeed'] = self.randomSeed
         G_hp.attrs['mode'] = self.mode
         G_hp.attrs['transientTime'] = self.transientTime
+        G_hp.attrs['ws_p']  = self.ws_p
+        G_hp.attrs['use_watts_strogatz_reservoir']= float(self.use_watts_strogatz_reservoir)
         
         
         G_data = f.create_group('Data')
@@ -972,6 +974,8 @@ class ESN:
             G_hp = f.get('Hyperparameters')
             trainingLength = G_hp.attrs['trainingLength']
             testingLength  = G_hp.attrs['testingLength']
+            validationLength  = G_hp.attrs['validationLength']
+        
             data_timesteps = G_hp.attrs['data_timesteps']
             n_input        = G_hp.attrs['n_input']
             n_output       = G_hp.attrs['n_output']
@@ -996,23 +1000,51 @@ class ESN:
             esn_end      = G_hp.attrs['esn_end']
             mode = G_hp.attrs['mode']
             transientTime = G_hp.attrs['transientTime']
-            
+            use_watts_strogatz_reservoir = bool(G_hp.attrs['use_watts_strogatz_reservoir'])
+            ws_p = G_hp.attrs['ws_p']
+
             
             G_data = f.get('Data')
-            y_train = np.array(G_data.get('y_train'))
-            u_train = np.array(G_data.get('u_train'))
-            y_test = np.array(G_data.get('y_test'))
-            try:
+            if 'y_train' in G_data:
+                y_train = np.array(G_data.get('y_train'))
+            else:
+                y_train = None
+
+            if 'u_train' in G_data:
+                u_train = np.array(G_data.get('u_train'))
+            else:
+                u_train = None
+            
+            if 'y_test' in G_data:
+                y_test = np.array(G_data.get('y_test'))
+            else:
+                y_test = None
+
+            if 'u_test' in G_data:
                 u_test = np.array(G_data.get('u_test'))
-            except:
-                u_test = None                                
-    
+            else:
+                u_test = None
+
+            if 'y_val' in G_data:
+                y_val = np.array(G_data.get('y_val'))
+            else:
+                y_val = None
+
+            if 'u_val' in G_data:
+                u_val = np.array(G_data.get('u_val'))
+            else:
+                u_val = None
+
+
+
+
 
         esn = ESN(  randomSeed = randomSeed,
                     esn_start = esn_start,
                     esn_end = esn_end,
                     trainingLength = trainingLength,
                     testingLength = testingLength,
+                    validationLength = validationLength,
                     data_timesteps = data_timesteps,
                     n_input = n_input,
                     n_output =  n_output,
@@ -1027,16 +1059,24 @@ class ESN:
                     inputScaling = inputScaling,
                     inputDensity = inputDensity,
                     noiseLevel_in = noiseLevel_in,
-                    noiseLevel_out = noiseLevel_outG_hp,
+                    noiseLevel_out = noiseLevel_out,
                     mode = mode,
                     weightGeneration = weightGeneration,
                     transientTime = transientTime,
                     extendedStateStyle = extendedStateStyle,
+                    use_watts_strogatz_reservoir=use_watts_strogatz_reservoir,
+                    ws_p=ws_p,
                     verbose = False
                 )
             
-        esn.SetTrainingData(u_train = u_train, y_train = y_train)
-        esn.SetTestingData(y_test = y_test, u_test = u_test)
+        if u_train is not None and y_train is not None:
+            esn.SetTrainingData(u_train = u_train, y_train = y_train)
+        if y_test is not None:
+            esn.SetTestingData(y_test = y_test, u_test = u_test)
+        if u_val is not None and y_val is not None:
+            esn.SetValidationData(y_val=y_val, u_val=u_val)     
+    
+
         esn.setDevice(_DEVICE)
 
         return esn
@@ -1078,27 +1118,29 @@ class ESN:
     def ml4ablReservoir(cls, 
                         data_timesteps: int = 2000, 
                         trainingLength: int = 700, 
-                        testingLength: int = 700, 
+                        testingLength: int = 500, 
+                        validationLength: int = 500,
                         mode: str = 'auto', 
                         verbose: bool = False):
         '''
-            Machine learning for atmospheric boundary layer project w. Juan Pedor Mellado. Data are the first 300 POD time coefficients
+            Machine learning for atmospheric boundary layer project. Data should be the first 300 POD time coefficients
             of 2D RBC data with Neumann boundary conditions for the buoyancy.
 
         '''
 
         assert mode in _ESN_MODES,'Error: unkown mode {0}. Choices {1}'.format(mode, _ESN_MODES)
 
-        esn_timesteps = trainingLength + testingLength
+        esn_timesteps = trainingLength + testingLength + validationLength
         esn_start = data_timesteps - esn_timesteps
         esn_end = data_timesteps
 
         esn = cls(  randomSeed = 0,
                     esn_start = esn_start, 
                     esn_end = esn_end,
-                    trainingLength =700, 
-                    testingLength = 700,
-                    data_timesteps = 2000,
+                    trainingLength =trainingLength, 
+                    testingLength = testingLength,
+                    validationLength = validationLength,
+                    data_timesteps = data_timesteps,
                     n_input = 300,
                     n_output = 300,
                     n_reservoir = 4096,
@@ -1117,6 +1159,7 @@ class ESN:
                     weightGeneration = "uniform",
                     extendedStateStyle = 'default',
                     transientTime = 50,
+                    use_watts_strogatz_reservoir = False,
                     verbose = verbose
                 )
             
@@ -1166,6 +1209,7 @@ class ESN:
                     weightGeneration = "uniform",
                     extendedStateStyle = 'default',
                     transientTime = 44,
+                    use_watts_strogatz_reservoir = False,
                     verbose = verbose
                 )
 
