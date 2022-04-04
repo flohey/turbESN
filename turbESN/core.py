@@ -882,9 +882,9 @@ class ESN:
         G_data = f.create_group('Data')
         #Datasets
         if self.u_train is not None:
-            G_data.create_dataset('u_test',   data = self.u_train, compression = 'gzip', compression_opts = 9)
+            G_data.create_dataset('u_train',   data = self.u_train, compression = 'gzip', compression_opts = 9)
         if self.y_train is not None:
-            G_data.create_dataset('u_test',   data = self.y_train, compression = 'gzip', compression_opts = 9)
+            G_data.create_dataset('y_train',   data = self.y_train, compression = 'gzip', compression_opts = 9)
         if self.u_test is not None:
             G_data.create_dataset('u_test',   data = self.u_test, compression = 'gzip', compression_opts = 9)
         if self.y_test is not None:
