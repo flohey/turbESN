@@ -1,0 +1,64 @@
+# Multiprocessing
+#-----------------------
+MAX_PROC: null
+MAX_THREADS: 3
+
+# case params
+#---------------------------
+#/
+
+# ESN Setting
+#---------------------------
+n_reservoir: 2048
+leakingRate: 1.0
+spectralRadius:  0.99
+reservoirDensity: 0.2
+regressionParameter: 5.0e-2
+mode: "auto"
+verbose: False
+
+bias_in: 1
+bias_out: 1
+outputInputScaling: 0
+inputScaling: 1
+inputDensity: 1
+noiseLevel_in: 1e-6
+noiseLevel_out: 0
+extendedStateStyle: "default"
+weightGeneration: "uniform"
+use_watts_strogatz_reservoir: False
+ws_p: 0.2
+
+# ESN Data Layout
+#---------------------------
+dataScaling: 2
+trainingLength: 750
+testingLength:  700
+validationLength: 400
+transientTime: 50
+    
+# Study parameter
+#---------------------------
+nseed: 10                                        
+doRandomSearch: True                                             
+nstudy: 100            #random search
+use_log_scale: True    #random search
+
+study_tuple: 
+  - "regressionParameter"
+  - "spectralRadius"
+  - "leakingRate"
+
+study_param_limits:
+  - [5.0e-3,5.0e-1,10]
+  - [0,1.3,10]
+  - [0,1,10]
+
+
+# Data paths
+#---------------------------
+path_data:     ''                       
+filename_data: ''
+path_esn:      ''                          
+
+comment_str: ""
