@@ -171,7 +171,7 @@ class ESN:
             #adjust reservoir density
             if self.use_watts_strogatz_reservoir:
                 ws_k = int(self.reservoirDensity*self.n_reservoir)
-                _mask = torch.tensor(nx.to_numpy_array(nx.watts_strogatz_graph(self.n_reservoir,ws_k,self.ws_p)),dtype = int)
+                _mask = torch.tensor(~nx.to_numpy_array(nx.watts_strogatz_graph(self.n_reservoir,ws_k,self.ws_p)).astype(bool),dtype = bool)
             else:
                 _mask = torch.rand(self.n_reservoir, self.n_reservoir, dtype = _DTYPE, device = self.device) > self.reservoirDensity
         
@@ -405,7 +405,7 @@ class ESN:
         return y_pred.T, X_pred
 
 #--------------------------------------------------------------------------
-    def teacherforce(self, X: torch.Tensor, testingLength: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def teacherforce(self, X: torch.Tensor, testingLength: int, u: torch.Tensor=None) -> Tuple[torch.Tensor, torch.Tensor]:
         '''
         Use in mode = teacher.
 
@@ -415,6 +415,7 @@ class ESN:
         INPUT:
             X             - state matrix (from which the last state will be taken as starting point) 
             testingLength - number of iterations of the prediction phase
+            u             - teacher signal (if None, self.u_test is used)
 
         RETURN:
             y_pred - reservoir output (predictions)
@@ -427,10 +428,13 @@ class ESN:
         X_pred = torch.zeros((self.xrows, testingLength), device = self.device, dtype = _DTYPE)
         x = X[:,-1].reshape(self.xrows,)
 
+        if u is None:
+            u = self.u_test
+
         #compute reservoir states
         for it in range(testingLength):
             x_in = self.fetch_state(x)
-            x = self.propagate(self.u_test[it].reshape(1,self.n_input),x = x_in)      #state at time it
+            x = self.propagate(u[it].reshape(1,self.n_input),x = x_in)      #state at time it
 
             X_pred[:,it] = x.reshape(self.xrows,)
 
@@ -512,7 +516,7 @@ class ESN:
     #--------------------------------------------------------------------------
     def SetTrainingData(self, u_train: torch.Tensor, y_train: torch.Tensor):
         
-        assert u_train.shape[0] == y_train.shape[0] and u_train.shape[1] == y_train.shape[1],'Training input dimensions  ({0},{1}) do not match training output dimensions ({2},{3}).\n'.format(u_train.shape[0], u_train.shape[1], y_train.shape[0], y_train.shape[1])
+        assert u_train.shape[0] == y_train.shape[0],'Training input dimension ({0}) does not match training output time dimension ({1}).\n'.format(u_train.shape[0], y_train.shape[0])
         assert u_train.shape[1] == self.n_input,'Training input dimension ({0}) does not match ESN n_input ({1}).\n'.format(u_train.shape[1], self.n_input)
         assert y_train.shape[1] == self.n_output, 'Training output dimension ({0}) does not match ESN n_output ({1}).\n'.format(u_train.shape[1], self.n_output)
         
@@ -535,7 +539,7 @@ class ESN:
             if self.y_train is not None and pred_init_input is None:
                 #Initial input is last training input. Then first prediction aligns with the first entry of y_test
                 logging.debug('Initial testing input not specified. Using last target training output.')
-                self.pred_init_input = self.y_train[-1,:]    #initial input the trained ESN receives for the beginning of the testing phase
+                self.pred_init_input = self.y_train[-1:,:]    #initial input the trained ESN receives for the beginning of the testing phase
            
             elif pred_init_input is not None:
                 self.pred_init_input = pred_init_input
@@ -551,7 +555,7 @@ class ESN:
                 #TO DO: pred_init_input has len n_input. The teacher part of it is not used (see self.semiteacherforce).
 
     #--------------------------------------------------------------------------
-    # FH 30.03.2022: Added Validation Datset
+    # FH 30.03.2022: Added Validation Datset (auto mode!)
     def SetValidationData(self, y_val: torch.Tensor, u_val: torch.Tensor = None, val_init_input: torch.Tensor = None,):   
 
         assert y_val.shape[1] == self.n_output,'Validation output dimension ({0}) does not match ESN n_output ({1}).\n'.format(y_val.shape[1], self.n_output)
@@ -561,10 +565,13 @@ class ESN:
 
         if self.mode == 'auto':
 
-            if val_init_input is not None:
+            if self.y_test is not None and val_init_input is None:
+                #Initial input is last testing input. Then first prediction aligns with the first entry of y_val
+                logging.debug('Initial validation input not specified. Using last target test output.')
+                self.val_init_input = self.y_test[-1:,:]    #initial input the trained ESN receives for the beginning of the validation phase
+
+            elif val_init_input is not None:
                 self.val_init_input = val_init_input
-            else:
-                self.val_init_input = None
 
     #--------------------------------------------------------------------------
     #FH 14/11/2021: Added logging 
@@ -1093,17 +1100,17 @@ class ESN:
 
         HP_range_dict = {}
 
-        HP_range_dict['n_reservoir'] = (1e2,1e4)
-        HP_range_dict['leakingRate'] = (1e-3,1e0)
-        HP_range_dict['spectralRadius'] = (1e-3,1e1)
+        HP_range_dict['n_reservoir'] = (1e2,5e3)
+        HP_range_dict['leakingRate'] = (1e-2,1e0)
+        HP_range_dict['spectralRadius'] = (1e-3,2e0)
         HP_range_dict['reservoirDensity'] = (1e-2,1e0)
-        HP_range_dict['dataScaling'] = (1e-2,1e1)
-        HP_range_dict['regressionParameters'] = (1e-6,1e0)
+        HP_range_dict['dataScaling'] = (1e-2,5e0)
+        HP_range_dict['regressionParameter'] = (1e-6,1e1)
         HP_range_dict['bias_in'] = (1e-3,1e0)
         HP_range_dict['bias_out'] = (1e-3,1e0)
         HP_range_dict['outputInputScaling'] = (1e-3,1e0)
         HP_range_dict['inputScaling'] = (1e-2,1e1)
-        HP_range_dict['inputrDensity'] = (1e-2,1e0)
+        HP_range_dict['inputDensity'] = (1e-2,1e0)
         HP_range_dict['noiseLevel_in'] = (1e-6,1e0)
         HP_range_dict['noiseLevel_out'] = (1e-6,1e0)
         
