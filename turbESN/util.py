@@ -17,7 +17,7 @@ import logging
 from typing import Union, Tuple, List
 
 from scipy.stats import wasserstein_distance
-from scipy.stats import loguniform
+from scipy.stats import loguniform, uniform
 
 
 _MSE_DEFAULT = 1e6  #default value for the mean square error, if error occurs
@@ -78,7 +78,8 @@ def PrepareTeacherData(data_in: Union[np.ndarray, torch.Tensor],
                        trainingLength: int, 
                        testingLength: int, 
                        esn_start: int, 
-                       esn_end: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                       esn_end: int,
+                       validationLength: int = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     ''' Prepares the input and output training and testing/validation data set for the teacher forced ESN case, i.e. where the
         reservoir input is a teacher signal. 
 
@@ -89,6 +90,7 @@ def PrepareTeacherData(data_in: Union[np.ndarray, torch.Tensor],
         n_output       - output dimensions/ no. output modes
         trainingLength - no. time steps for the training data set
         testingLength  - no. time steps for the testing/validation data set
+        validationLength -  no. time steps for the validation data set
         esn_start      - Index of the original data, at which the training output y_train will begin. 
         esn_end        - Index of the original data, at which the testing/validation output y_test will end.
 
@@ -97,6 +99,8 @@ def PrepareTeacherData(data_in: Union[np.ndarray, torch.Tensor],
         y_train - training output data set. Shape: (trainingLength, n_output)
         u_test  - testing/validation input data set.  Shape: (testingLength, n_input)
         y_test  - testing/validation output data set. Shape: (testingLength, n_output)
+        u_val   - validation input data set (not used in auotnomous predictor mode). Shape: (validationLength, n_input)
+        y_val   - validation output data set. Shape: (validationLength, n_output)
     '''
     data_in_esn = data_in[esn_start-1:esn_end,:n_input]
     data_out_esn = data_out[esn_start-1:esn_end,:n_output]
@@ -107,7 +111,15 @@ def PrepareTeacherData(data_in: Union[np.ndarray, torch.Tensor],
     u_test = data_in_esn[trainingLength:trainingLength+testingLength]
     y_test = data_out_esn[trainingLength:trainingLength+testingLength]
 
-    return torch.as_tensor(u_train, dtype = _DTYPE), torch.as_tensor(y_train, dtype = _DTYPE),torch.as_tensor(u_test, dtype = _DTYPE),torch.as_tensor(y_test, dtype = _DTYPE)
+    if validationLength is not None:
+        u_val = data_in_esn[trainingLength+testingLength:trainingLength+testingLength+validationLength]
+        y_val = data_out_esn[trainingLength+testingLength:trainingLength+testingLength+validationLength]
+
+    else:
+        u_val = None
+        y_val = None
+
+    return torch.as_tensor(u_train, dtype = _DTYPE), torch.as_tensor(y_train, dtype = _DTYPE),torch.as_tensor(u_test, dtype = _DTYPE),torch.as_tensor(y_test, dtype = _DTYPE), torch.as_tensor(u_val, dtype = _DTYPE),torch.as_tensor(y_val, dtype = _DTYPE)
 
 #--------------------------------------------------------------------------
 def Recursion(iparam: int, iterators: np.ndarray, study_parameters: tuple):
@@ -231,6 +243,43 @@ def check_user_input(esn, u_train: Union[np.ndarray, torch.Tensor] = None,
 
     esn.toTorch()
 
+#--------------------------------------------------------------------------
+#FH 25.05.2022: added minmax_scaling
+def minmax_scaling(x, x_min=None,x_max=None, dataScaling=1):
+    '''
+    Applies min-max scaling to data x. If x_min,x_max not given, they are compute based on min/max values along time axis (axis 0)
+
+    INPUT:
+        x           - data, shape: (timesteps, modes) 
+        x_min       - min value of data x
+        x_max       - max value of data x 
+        dataScaling - scaling factor
+
+    RETURN:
+        x_scaled - x scaled to interval [-dataScaling, dataScaling]
+    '''
+    arr_type = type(x)
+
+    if x_min is None:
+        if arr_type == np.ndarray:
+            x_min = x.min(axis=0)
+        elif arr_type == torch.Tensor:
+            x_min = torch.amin(x,dim=0)
+
+    if x_max is None:
+        if arr_type == np.ndarray:
+            x_max = x.max(axis=0)
+        elif arr_type == torch.Tensor:
+            x_max = torch.amax(x,dim=0)
+            
+
+    x_scaled = (x - x_min)/(x_max- x_min)
+    x_scaled -= 0.5
+    x_scaled *=2*dataScaling
+
+    return x_scaled
+
+
 ###########################################################################################################
 
 #                            RUNNING AN ESN
@@ -320,25 +369,31 @@ def RunturbESN(esn, u_train: Union[np.ndarray, torch.Tensor]=None,
 
     mse_test = ComputeMSE(y_test = esn.y_test,y_pred = y_pred_test)
     
-    #----------------------------------------------------------
-    #4. (optional) Validation Phase (for now only in auto mode)
-    #----------------------------------------------------------
+    #-------------------------------------------------------------------------
+    #4. (optional) Validation Phase (for now only in auto & teacherforce mode)
+    #-------------------------------------------------------------------------
     mse_val = None
+    y_pred_val = None
 
-    if esn.mode == _ESN_MODES[0]:
-        if None not in [esn.u_val, esn.y_val]:
+    
+    if None not in [esn.u_val, esn.y_val]:
 
-            validationLength = esn.y_val.shape[0]
-            if u_pre_val is not None:
-                X_pre_val = esn.propagate(u = u_pre_val, transientTime = u_pre_val.shape[0]-1)
-                #esn.val_init_input = u_pre_val[-1,:].reshape(1,esn.n_input)   #this is already set in check_user_input
-            else:
-                # validation phase directly preceeded by testing phase
-                X_pre_val = esn.x_pred
+        validationLength = esn.y_val.shape[0]
+        if u_pre_val is not None:
+            X_pre_val = esn.propagate(u = u_pre_val, transientTime = u_pre_val.shape[0]-1)
+            #esn.val_init_input = u_pre_val[-1,:].reshape(1,esn.n_input)   #this is already set in check_user_input
+        else:
+            # validation phase directly preceeded by testing phase
+            X_pre_val = esn.x_pred
+            if esn.mode == _ESN_MODES[0]:
                 esn.val_init_input = esn.y_test[-1,:].reshape(1,esn.n_input)
 
+        if esn.mode == _ESN_MODES[0]:
             y_pred_val, esn.x_val = esn.predict(X=X_pre_val, testingLength=validationLength,init_input=esn.val_init_input)
-            mse_val = ComputeMSE(y_test = esn.y_val,y_pred = y_pred_val)
+        if esn.mode == _ESN_MODES[1]:
+            y_pred_val, esn.x_val = esn.teacherforce(X = esn.x_fit, testingLength = esn.validationLength,u=esn.u_val)
+
+        mse_val = ComputeMSE(y_test = esn.y_val,y_pred = y_pred_val)
         
 
     return mse_train, mse_test, mse_val, y_pred_test, y_pred_val
@@ -704,13 +759,13 @@ def ReadStudy(filepath: str, study_parameters: Union[list,tuple], nstudy: int = 
                 study_dicts.append(study_dict)
             
         config = CreateStudyConfigArray(study_parameters, study_dicts)
-        return np.array(mse_train), np.array(mse_test), np.array(y_pred), config
+        return np.array(mse_train), np.array(mse_test), np.array(mse_val), np.array(y_pred_test), np.array(y_pred_val), config
 
     #read all specified seeds
     else:
         with h5py.File(filepath,'r') as f:
             
-            mse_train, mse_test, y_pred, study_dicts = [], [], [], []
+            mse_train, mse_test, mse_val, y_pred_test, y_pred_val, study_dicts = [], [], [], [], [], []
 
             for ii,esn_id in enumerate(esn_ids):
                 G_esn_id = f.get(str(esn_id))
@@ -748,7 +803,7 @@ def ReadStudy(filepath: str, study_parameters: Union[list,tuple], nstudy: int = 
                 
                     
         config = CreateStudyConfigArray(study_parameters, study_dicts)
-        return np.array(mse_train), np.array(mse_test), np.array(mse_val),np.array(y_pred_test), np.array(y_pred_val), config
+        return np.array(mse_train), np.array(mse_test), np.array(mse_val), np.array(y_pred_test), np.array(y_pred_val), config
 
 
 ###########################################################################################################
@@ -757,7 +812,7 @@ def ReadStudy(filepath: str, study_parameters: Union[list,tuple], nstudy: int = 
 
 ###########################################################################################################
 
-def InitRandomSearchStudyOrder(nstudy: int, study_tuple: tuple, HP_range_dict: dict = {}) -> list:
+def InitRandomSearchStudyOrder(nstudy: int, study_tuple: tuple, HP_range_dict: dict = {}, use_log_scale: bool=False) -> list:
     ''' Initializes the HP study parameter settings for a random search. 
         Each of the nstudy settings is given by an entry of the returned list config.
 
@@ -765,7 +820,7 @@ def InitRandomSearchStudyOrder(nstudy: int, study_tuple: tuple, HP_range_dict: d
         nstudy           - number of different reservoir setting that should be studied. 
         study_tuple      - tuple specifying the parameters that are studied
         HP_range_dict    - dictionary containing the interval of each hyperparameter (HP must be specified in study_set) 
-
+        use_log_scale    - whether to use loguniform dist. or uniform (nothe that regressionParameter always uses log scale)
     RETURN: 
         config - array indicating the parameter setting for given study
     '''
@@ -780,12 +835,19 @@ def InitRandomSearchStudyOrder(nstudy: int, study_tuple: tuple, HP_range_dict: d
         setting = []
         iparam = 0
         for param in study_tuple:
-            if param == 'regressionParameters':
-                setting.append([loguniform.rvs(HP_range_dict[param][0],HP_range_dict[param][1],size = 1)[0]])
-            elif param == 'n_reservoir':
-                setting.append(int(loguniform.rvs(HP_range_dict[param][0],HP_range_dict[param][1],size = 1)[0]))
-            else:
+            if param == 'regressionParameter':
                 setting.append(loguniform.rvs(HP_range_dict[param][0],HP_range_dict[param][1],size = 1)[0])
+            elif param == 'n_reservoir':
+                if use_log_scale:
+                    setting.append(int(loguniform.rvs(HP_range_dict[param][0],HP_range_dict[param][1],size = 1)[0]))
+                else:
+                    setting.append(int(uniform.rvs(HP_range_dict[param][0],HP_range_dict[param][1],size = 1)[0]))
+            else:
+                if use_log_scale:
+                    setting.append(loguniform.rvs(HP_range_dict[param][0],HP_range_dict[param][1],size = 1)[0])
+                else:
+                    setting.append(uniform.rvs(HP_range_dict[param][0],HP_range_dict[param][1],size = 1)[0])
+                
             
             iparam +=1
         config.append(setting)
