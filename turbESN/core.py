@@ -125,9 +125,6 @@ class ESN:
     def createInputMatrix(self):
         '''
         Random initialization of the input weights. The weights are drawn from U[-0.5,0.5] or N[0,1] and subsequently scaled by the input scaling.
-
-        RETURN:
-            Win - reservoir input weight matrix
         '''
         
         logging.debug('Building input matrix')
@@ -151,11 +148,8 @@ class ESN:
         '''
         Random initialization of the reservoir weights. The weights are drawn from U[-0.5,0.5]. The reservoir density is set.
         Finally, the largest absolute eigenvalue is computed, by which Wres is normalized. Then Wres is scaled by the spectral radius.
-
-        RETURN:
-            Wres - reservoir weight matrix
         '''
-        
+            
         logging.debug('Building reservoir matrix')
 
         if self.weightGeneration == 'uniform':
@@ -286,7 +280,7 @@ class ESN:
                     )[:, 0]
         return X
 #--------------------------------------------------------------------------
-    def verifyReservoirConvergence(self, u: torch.Tensor, transientTimeCalculationEpsilon: float = 1e-3, transientTimeCalculationLength: int = 20 ):
+    def verifyReservoirConvergence(self, u: torch.Tensor=None, transientTimeCalculationEpsilon: float = 1e-3, transientTimeCalculationLength: int = 20 ):
         ''' Computes the convergence of two independent states: -1 and 1, when encountering the data u_train.
             INPUT:
                 u - training input data (with which the reservoir is beeing forced)
@@ -296,6 +290,10 @@ class ESN:
             RETURN:
                 transientTime - no. time steps needed for two states -1 and 1, given the current reservoir and input u, to converge to a 'similar state'.
         '''
+
+        if u is None:
+            u = self.u_train
+            
         input_timesteps = u.shape[0]
 
         x_init    =  torch.empty((2,self.n_reservoir, 1), device = self.device, dtype = _DTYPE)
@@ -599,7 +597,7 @@ class ESN:
             self.n_output = self.n_input 
         
         #adjust xrows as according to changed n_input
-        if self.extendedStateStyle == _EXNTENDED_STATE_STYLES[0]:
+        if self.extendedStateStyle == _EXTENDED_STATE_STYLES[0]:
             self.xrows = int(1+self.n_reservoir+self.n_input)          
         
         study_dict['n_input'] = n_input
@@ -611,7 +609,7 @@ class ESN:
         self.n_reservoir = n_reservoir
 
         #adjust xrows as according to changed n_reservoir
-        if self.extendedStateStyle == _EXNTENDED_STATE_STYLES[0]:
+        if self.extendedStateStyle == _EXTENDED_STATE_STYLES[0]:
             self.xrows = int(1+self.n_reservoir+self.n_input)           
         else:
             self.xrows = int(1+2*self.n_reservoir)
@@ -734,7 +732,7 @@ class ESN:
         
         assert len(study_tuple) > 0,'study_tuple is empty. Did you forget to specify the study HP?'
 
-        study_dict  ={}
+        study_dict = {}
 
         for iparam, parameter in enumerate(study_tuple):
 

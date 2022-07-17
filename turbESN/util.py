@@ -314,10 +314,12 @@ def RunturbESN(esn, u_train: Union[np.ndarray, torch.Tensor]=None,
             u_pre_val          - transient input before validation phase (if None, last reservoir state of testing phase used for init. validation state)
 
         RETURN:
-            mse_train - mean square error of (teacher forced!) reservoir output (to training target data set y_train) in the training phase. Mean w.r.t. timestep-axis. 
-            mse_test  - mean square error of reservoir output (to testing data set y_test). Mean w.r.t. timestep-axis
-            y_pred    - reseroir outputs, produced by the given reservoir specified in esn.
-            mse_val   - mean square error of reservoir output (to validation data set y_val). Mean w.r.t. timestep-axis. 
+            mse_train   - mean square error of (teacher forced!) reservoir output (to training target data set y_train) in the training phase. Mean w.r.t. timestep-axis. 
+            mse_test    - mean square error of reservoir output (to testing data set y_test). Mean w.r.t. timestep-axis
+            mse_val     - mean square error of reservoir output (to validation data set y_val). Mean w.r.t. timestep-axis. 
+            y_pred_test - reseroir outputs of testing phase
+            y_pred_val  - reseroir outputs of validation phase
+            
     '''
 
     torch.manual_seed(esn.randomSeed)  
@@ -343,9 +345,9 @@ def RunturbESN(esn, u_train: Union[np.ndarray, torch.Tensor]=None,
 
     if np.isnan(esn.Wout).any() or mse_train is None:
         logging.error("Reservoir {0}: while fitting the model, an error occured. Assuming default values.".format(esn.id))
-        mse_train = _MSE_DEFAULT
-        mse_test = _MSE_DEFAULT
-        mse_val = _MSE_DEFAULT
+        mse_train = torch.tensor([_MSE_DEFAULT for _ in range(esn.n_output)],device = esn.device,dtype = _DTYPE)
+        mse_test = torch.tensor([_MSE_DEFAULT for _ in range(esn.n_output)],device = esn.device,dtype = _DTYPE)
+        mse_val = torch.tensor([_MSE_DEFAULT for _ in range(esn.n_output)],device = esn.device,dtype = _DTYPE)
         y_pred_test = torch.zeros([esn.testingLength, esn.n_output], device = esn.device, dtype = _DTYPE)
         y_pred_val = torch.zeros([esn.testingLength, esn.n_output], device = esn.device, dtype = _DTYPE)
 
@@ -794,12 +796,12 @@ def ReadStudy(filepath: str, study_parameters: Union[list,tuple], nstudy: int = 
                         Y_pred_val.append(np.array(G_study.get('y_pred_val')))
                         
 
-                mse_train.append(MSE_train)
-                mse_test.append(MSE_test)
-                mse_val.append(MSE_val)
+                mse_train.append(np.array(MSE_train))
+                mse_test.append(np.array(MSE_test))
+                mse_val.append(np.array(MSE_val))
                 
-                y_pred_test.append(Y_pred_test)
-                y_pred_val.append(Y_pred_val)
+                y_pred_test.append(np.array(Y_pred_test))
+                y_pred_val.append(np.array(Y_pred_val))
                 
                     
         config = CreateStudyConfigArray(study_parameters, study_dicts)
