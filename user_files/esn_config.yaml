@@ -54,7 +54,12 @@ study_param_limits:
   - [0,1.3,10]
   - [0,1,10]
 
+study_param_list:                 #[val1, val2, val3,...]
+  - [5.0e-3,6.0e-3]
+  - [0.4,0.6]
+  - [0.2, 0.7]
 
+  
 # Data paths
 #---------------------------
 path_data:     ''                       

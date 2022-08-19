@@ -101,6 +101,12 @@ if __name__ == '__main__':
     doRandomSearch = yaml_config["doRandomSearch"]                                               
     study_tuple = yaml_config["study_tuple"]  
     study_param_limits = yaml_config["study_param_limits"]
+    study_param_list = yaml_config["study_param_list"]
+
+    if study_param_list is None:
+        study_param_list = [None for _ in study_tuple]
+    
+    assert len(study_param_list) == len(study_tuple), "Error: study_param_list must have same length as study_tuple!"
 
     # Path config
     #-------------------
@@ -152,9 +158,23 @@ if __name__ == '__main__':
         print('Random Search. Seeds: {0}. Studies per seed: {1}\n'.format(nseed, nstudy))
     else:
         study_parameters = []
-        for limits in study_param_limits:
-            x0,x1,nx = limits
-            study_parameters.append(np.linspace(x0,x1,nx))   
+        for ii,limits in enumerate(study_param_limits):
+            
+            # parameter values are read from config
+            if len(study_param_list[ii]) is not None and len(study_param_list[ii]) != 0:
+                param_val = study_param_list[ii]
+
+            # parameter values are computed from limits in config
+            else:
+                assert len(limits) == 4, "Error: study_param_limits must be of style [value_min, value_max, nvals, use_log]!"
+                x0,x1,nx, use_log = limits
+
+                if use_log:
+                    param_val = np.logspace(x0,x1,nx)
+                else:
+                    param_val = np.linspace(x0,x1,nx)
+                
+            study_parameters.append(param_val)   
 
         study_parameters = tuple(study_parameters)
 
