@@ -6,8 +6,8 @@ import torch
 import h5py 
 
 #turbESN
-from core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT)
-from cross_validation import CrossValidation
+from .core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT)
+from .cross_validation import CrossValidation
 
 #misc
 import sys
@@ -105,6 +105,10 @@ def PrepareTeacherData(data_in: Union[np.ndarray, torch.Tensor],
         u_val   - validation input data set (not used in auotnomous predictor mode). Shape: (validationLength, n_input)
         y_val   - validation output data set. Shape: (validationLength, n_output)
     '''
+
+    data_in = torch.as_tensor(data_in, dtype=_DTYPE)
+    data_out = torch.as_tensor(data_out, dtype=_DTYPE)
+    
     data_in_esn = data_in[esn_start-1:esn_end,:n_input]
     data_out_esn = data_out[esn_start-1:esn_end,:n_output]
 

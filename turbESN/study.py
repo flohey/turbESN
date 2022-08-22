@@ -1,13 +1,13 @@
 #turbESN
-from util import (
+from .util import (
     SaveStudy, 
     RunturbESN,
     forward_validate_auto_ESN,
     ComputeWassersteinDistance
     )
 
-from core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT)
-from cross_validation import CrossValidation
+from .core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT)
+from .cross_validation import CrossValidation
 
 #Parallelization
 import multiprocessing as mp
