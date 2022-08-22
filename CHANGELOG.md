@@ -94,3 +94,15 @@
 
 ### 01.07.2022
 - corrected PyDoc in RunturbESN method in util.py
+
+
+## Release 0.0.1.8.9.8
+---------------------
+### 19.08.2022
+- `__init__.py`: import `__version__`
+- removed small world reservoir matrix initialization via networkx
+- check for neuron specific leaking rate in __init__ method in core.py
+
+### 22.08.2022
+- fixed logging error in SetTrainingData in core.py
+- **implemented feedback weights, where last ESN output is passed to the reservoir**

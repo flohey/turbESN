@@ -137,3 +137,5 @@ TODO
 dist/
 build
 basic_tour/basic_tour.ipynb
+temp/
+upload_project.txt

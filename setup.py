@@ -13,7 +13,7 @@ LONG_DESCRIPTION = 'An echo state network implementation, used in my PhD researc
 
 about = {}
 if not VERSION:
-    with open(os.path.join(here, NAME, "__version__.py")) as f:
+    with open(os.path.join(here, NAME, "_version.py")) as f:
         exec(f.read(), about)
 else:
     about["__version__"] =  VERSION

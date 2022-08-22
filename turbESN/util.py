@@ -6,8 +6,8 @@ import torch
 import h5py 
 
 #turbESN
-from .core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT)
-from .cross_validation import CrossValidation
+from core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT)
+from cross_validation import CrossValidation
 
 #misc
 import sys
@@ -54,6 +54,8 @@ def PreparePredictorData(data: Union[np.ndarray, torch.Tensor],
         y_test  - testing/validation output data set. Shape: (testingLength, n_output)
     '''
     
+    data = torch.as_tensor(data, dtype=_DTYPE)
+
     data_esn = data[esn_start-1:esn_end,:n_input]
     u_train = data_esn[0:trainingLength,:]
     y_train = data_esn[1:trainingLength+1,:]
@@ -68,7 +70,8 @@ def PreparePredictorData(data: Union[np.ndarray, torch.Tensor],
         u_val = None
         y_val = None
 
-    return torch.as_tensor(u_train, dtype = _DTYPE), torch.as_tensor(y_train, dtype = _DTYPE),torch.as_tensor(u_test, dtype = _DTYPE),torch.as_tensor(y_test, dtype = _DTYPE),torch.as_tensor(u_val, dtype = _DTYPE),torch.as_tensor(y_val, dtype = _DTYPE)
+    return u_train.to(_DTYPE), y_train.to(_DTYPE), u_test.to(_DTYPE), y_test.to(_DTYPE), u_val.to(_DTYPE), y_val.to(_DTYPE)
+    #return torch.as_tensor(u_train, dtype = _DTYPE), torch.as_tensor(y_train, dtype = _DTYPE),torch.as_tensor(u_test, dtype = _DTYPE),torch.as_tensor(y_test, dtype = _DTYPE),torch.as_tensor(u_val, dtype = _DTYPE),torch.as_tensor(y_val, dtype = _DTYPE)
     
 #--------------------------------------------------------------------------
 def PrepareTeacherData(data_in: Union[np.ndarray, torch.Tensor], 
@@ -119,7 +122,8 @@ def PrepareTeacherData(data_in: Union[np.ndarray, torch.Tensor],
         u_val = None
         y_val = None
 
-    return torch.as_tensor(u_train, dtype = _DTYPE), torch.as_tensor(y_train, dtype = _DTYPE),torch.as_tensor(u_test, dtype = _DTYPE),torch.as_tensor(y_test, dtype = _DTYPE), torch.as_tensor(u_val, dtype = _DTYPE),torch.as_tensor(y_val, dtype = _DTYPE)
+    return u_train.to(_DTYPE), y_train.to(_DTYPE), u_test.to(_DTYPE), y_test.to(_DTYPE), u_val.to(_DTYPE), y_val.to(_DTYPE)
+    #return torch.as_tensor(u_train, dtype = _DTYPE), torch.as_tensor(y_train, dtype = _DTYPE),torch.as_tensor(u_test, dtype = _DTYPE),torch.as_tensor(y_test, dtype = _DTYPE), torch.as_tensor(u_val, dtype = _DTYPE),torch.as_tensor(y_val, dtype = _DTYPE)
 
 #--------------------------------------------------------------------------
 def Recursion(iparam: int, iterators: np.ndarray, study_parameters: tuple):
@@ -149,8 +153,7 @@ def InitStudyOrder(nstudy: int, study_parameters: tuple) -> list:
 
     INPUT:
         nstudy           - number of different reservoir settings that were studied. If nstudy = None, the number is deduced from the file.
-        study_parameters - tuple specifying the range of the parameters that are studied
-
+        study_parameters - tuple specifying the values of the parameters that are studied
 
     RETURN: 
         config - list indicating the parameter setting for given study
@@ -247,7 +250,8 @@ def check_user_input(esn, u_train: Union[np.ndarray, torch.Tensor] = None,
 #FH 25.05.2022: added minmax_scaling
 def minmax_scaling(x, x_min=None,x_max=None, dataScaling=1):
     '''
-    Applies min-max scaling to data x. If x_min,x_max not given, they are compute based on min/max values along time axis (axis 0)
+    Applies min-max scaling to data x & shifts data to [-dataScaling,dataScaling]. 
+    If x_min,x_max not given, they are compute based on min/max values along time axis (axis 0)
 
     INPUT:
         x           - data, shape: (timesteps, modes) 
@@ -294,7 +298,7 @@ def RunturbESN(esn, u_train: Union[np.ndarray, torch.Tensor]=None,
                     index_list_auto: list = [], index_list_teacher: list = [],
                     u_val: Union[np.ndarray, torch.Tensor]=None,
                     y_val: Union[np.ndarray, torch.Tensor]=None,
-                    u_pre_val: Union[np.ndarray, torch.Tensor]=None) -> Tuple[torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor]:
+                    u_pre_val: Union[np.ndarray, torch.Tensor]=None) -> Tuple[torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor]:
 
     ''' Runs the turbulent Echo State Network (turbESN) with the specified parameters. 
         The training and testing data must be specfied in the argument or in the esn object.
@@ -339,7 +343,7 @@ def RunturbESN(esn, u_train: Union[np.ndarray, torch.Tensor]=None,
     #----------------------------------------------------------
     #2. Training Phase
     #----------------------------------------------------------
-    esn.x_fit = esn.propagate(u = esn.u_train, transientTime = esn.transientTime)
+    esn.x_fit = esn.propagate(u = esn.u_train, transientTime = esn.transientTime,y=esn.y_train)
     esn.fit(X  = esn.x_fit, y = esn.y_train[esn.transientTime:])
     mse_train = ComputeMSE(y_test = esn.y_train[esn.transientTime:], y_pred =  (esn.Wout@esn.x_fit).T)
 
@@ -489,27 +493,30 @@ def forward_validate_auto_ESN(esn: ESN, cv: CrossValidation):
 
 ###########################################################################################################
 
-def ComputeMSE(y_test: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+def ComputeMSE(y_test: torch.Tensor, 
+               y_pred: torch.Tensor, 
+               axis: Union[int,tuple] = 1) -> torch.Tensor:
     '''
     Computes the mean square error between target data y_test and prediction data y_pred.
 
     INPUT:
         y_pred - reseroir outputs
         y_test - validation output
+        axis   - axis over which MSE should be computed. 0: time-axis, 1: mode-axis, (0,1): both
 
     OUTPUT:
-        mean square error of y_pred w.r.t. timestep-axis.
+        mean square error of y_pred w.r.t. specified axis
     '''
     
     logging.debug('Computing MSE')
 
     if y_test.dtype is not _DTYPE:
-        y_test = torch.as_tensor(y_test, dtype = _DTYPE)
+        y_test = y_test.to(_DTYPE)
         
     if y_pred.dtype is not _DTYPE:
-        y_pred = torch.as_tensor(y_pred, dtype = _DTYPE)
+        y_pred = y_pred.to(_DTYPE)
             
-    return torch.mean((y_test-y_pred)**2, dim = 0)
+    return torch.mean((y_test-y_pred)**2, dim = axis)
 #--------------------------------------------------------------------------
 def ComputeR2(y_test: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
     '''
@@ -552,6 +559,32 @@ def ComputeWassersteinDistance(y_test: torch.Tensor, y_pred: torch.Tensor) -> to
 
     return wasserstein_distance(hist_pred/torch.sum(hist_test), hist_test/torch.sum(hist_test))
 
+#--------------------------------------------------------------------------
+# FH 28.08.2022: added normalized prediction error according to Tanaka et al. Phys. Rev. Res. 4 (2022)
+def compute_normalized_prediction_error(y_test:torch.Tensor, 
+                                        y_pred:torch.Tensor, 
+                                        modal_mean:bool=True):
+    """
+    Computes the normalized prediction error (or its mean):
+                  ||y_test-y_pred|| / <y_test**2>_t^(1/2)
+    INPUT: 
+        y_test     - validation/ testing/ true output
+        y_pred     - reseroir outputs
+        modal_mean - return modal mean of normalized prediction errror
+    RETURN:
+        normalized_prediction_error - modal mean of normalized prediction error
+    """
+    
+    testingLength,n_output = y_test.shape
+    
+    norm = (torch.mean(y_test**2+1e-6,dim=(0,)).reshape(1,n_output))**(1/2)
+    normalized_prediction_error = torch.abs(y_test - y_pred)/norm
+    
+    if modal_mean:
+        normalized_prediction_error = normalized_prediction_error.mean(dim=1)
+    
+    return normalized_prediction_error
+    
 ###########################################################################################################
 
 #                            SAVING ESN STUDY
@@ -597,23 +630,32 @@ def CreateHDF5Groups(filepath: str, esn_ids: list, nstudy: int):
                     G.create_group(str(studyID))
 
 #--------------------------------------------------------------------------
-def SaveStudy(filepath: str, esn_id: int, 
-              studyID: int, study_dict: dict, 
-              y_pred_test: torch.Tensor, y_pred_val: torch.Tensor,mse_train: torch.Tensor, 
-              mse_test: torch.Tensor, mse_val: torch.Tensor, f =None, wass_dist = None):
+def SaveStudy(filepath: str, 
+              esn_id: int, 
+              studyID: int, 
+              study_dict: dict, 
+              y_pred_test: torch.Tensor,
+              y_pred_val: torch.Tensor,
+              mse_train: torch.Tensor, 
+              mse_test: torch.Tensor, 
+              mse_val: torch.Tensor, 
+              randomSeed: int =None,
+              f =None, 
+              wass_dist = None):
     '''Saves the ESN parameters from esn_params into a hdf5 file.
        The h5py file has to be init. with ReadModel (saving the fix parameters) before calling this function!
        
        INPUT:
           filepath    - path to which the hdf5 file of the ESN study is saved to
-          esn_id      - ESN ID (usually corresponds to a RNG seed)
+          esn_id      - ESN ID (usually corresponds to a RNG seed, if not use randomSeed kwarg)
           studyID     - ID specifying the study
           study_dict  - dictionary specifying the studied parameter configuration
           y_pred_test - reseroir outputs of testing phase
           y_pred_val  - reseroir outputs of validation phase
           mse_train   - mean square error of (teacher forced training) reservoir output (to training target dataset y_train) in the training phase. Mean w.r.t. timestep-axis. 
           mse_test    - mean square error of reservoir output (to test data set y_test). Mean w.r.t. timestep-axis. 
-          mse_val    - mean square error of reservoir output (to validation data set y_test). Mean w.r.t. timestep-axis. 
+          mse_val     - mean square error of reservoir output (to validation data set y_test). Mean w.r.t. timestep-axis. 
+          randomSeed  - RNG seed, if None, use esn_id
           f           - opened hdf5.File where study will be saved to. If None, hdf5 file in filepath will be opened
           wass_dist   - wasserstein distance of testing data (optional)
        '''
@@ -660,6 +702,14 @@ def SaveStudy(filepath: str, esn_id: int,
         G_study.attrs[param] = study_dict[param]  
     
     #----------------------------------
+    #  Save random seed
+    #----------------------------------    
+    if randomSeed is not None:
+        G_study.attrs["randomSeed"] = randomSeed
+    else:
+        G_study.attrs["randomSeed"] = esn_id
+
+    #----------------------------------
     #  Datasets
     #----------------------------------    
     G_study.create_dataset('y_pred_test', data = y_pred_test, compression = 'gzip', compression_opts = 9)
@@ -688,31 +738,40 @@ def CreateStudyConfigArray(study_parameters: Union[list,tuple], study_dicts: dic
             study_dicts      - dictionary specifying the study parameter configuration
 
         RETURN:
-            - config - array indicating the parameter setting for given study
+            - config - list indicating the parameter setting for given study
         '''
 
     nparam = len(study_parameters)      #no. different parameters that are studied
     nstudy = len(study_dicts)           #no. studies/ parameter settings that were conducted
-    config = np.empty([nstudy,nparam])
+    config = []   #np.empty([nstudy,nparam]) # FH 22.08.22: if HP is an array, config should be list
 
     for ii in range(nstudy):
         config_dict  =study_dicts[ii]
+
+        config_param = []
         for pp in range(nparam):
             key = study_parameters[pp]
-            config[ii,pp] = config_dict[key]
+            config_param.append(config_dict[key])
             
+        config.append(config_param)
+
     return config
 
 #--------------------------------------------------------------------------
-def ReadStudy(filepath: str, study_parameters: Union[list,tuple], nstudy: int = None, read_pred: bool = False, esn_ids: list = None, esn_id: int = None) -> Tuple[np.ndarray,np.ndarray,np.ndarray, np.ndarray]:
+def ReadStudy(filepath: str, 
+              study_parameters: Union[list,tuple], 
+              nstudy: int = None, 
+              read_pred: bool = False, 
+              esn_ids: list = None, 
+              esn_id: int = None) -> Tuple[np.ndarray,np.ndarray,np.ndarray, np.ndarray]:
     '''Imports the results of the ESN study. 
         
         INPUT:
             filepath         - path to which the hdf5 file of the ESN study was saved to
             study_parameters - list/tuple of strings specifying which parameters were studied. E.g. when reservoir size and density are studied: study_parameters = ['n_reservoir', 'reservoirDensity']
             nstudy           - number of different reservoir setting that were studied. If nstudy = None, the number is deduced from the file.
-            read_pred         - boolean specifying whether to import ESN predictions y
-            esn_ids          - list of ESN IDs (usually these corresponds to different RNG seeds. For example esn_ids = range(nseeds) for nseeds no. RNG seeds.)
+            read_pred        - boolean specifying whether to import ESN predictions y
+            esn_ids          - list of ESN IDs (usually these corresponds to different RNG seeds. For example esn_ids = range(nseeds) for nseeds RNG seeds.)
             esn_id           - ESN ID (usually corresponds to a RNG seed)
             
         RETURN:
@@ -814,7 +873,10 @@ def ReadStudy(filepath: str, study_parameters: Union[list,tuple], nstudy: int = 
 
 ###########################################################################################################
 
-def InitRandomSearchStudyOrder(nstudy: int, study_tuple: tuple, HP_range_dict: dict = {}, use_log_scale: bool=False) -> list:
+def InitRandomSearchStudyOrder(nstudy: int, 
+                              study_tuple: tuple, 
+                              HP_range_dict: dict = {}, 
+                              use_log_scale: bool=False) -> list:
     ''' Initializes the HP study parameter settings for a random search. 
         Each of the nstudy settings is given by an entry of the returned list config.
 

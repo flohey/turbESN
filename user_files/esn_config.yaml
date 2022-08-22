@@ -21,43 +21,47 @@ bias_in: 1
 bias_out: 1
 outputInputScaling: 0
 inputScaling: 1
+feedbackScaling: 1
 inputDensity: 1
 noiseLevel_in: 1e-6
 noiseLevel_out: 0
 extendedStateStyle: "default"
 weightGeneration: "uniform"
-use_watts_strogatz_reservoir: False
-ws_p: 0.2
+use_feedback: False
 
 # ESN Data Layout
 #---------------------------
-dataScaling: 2
+dataScaling: 1
 trainingLength: 750
 testingLength:  700
 validationLength: 400
 transientTime: 50
-    
-# Study parameter
+
+# Hyperparameter Grid & Random Search
 #---------------------------
 nseed: 10                                        
-doRandomSearch: True                                             
-nstudy: 100            #random search
-use_log_scale: True    #random search
+doRandomSearch: False   #random search                                    
+nstudy: 100             #random search
+use_log_scale: True     #random search
 
-study_tuple: 
+# Specify HP to be studied (first one moving slowest)
+study_tuple:                     
   - "regressionParameter"
   - "spectralRadius"
-  - "leakingRate"
+  - "leakingRate_neural"
+ 
+# Specify HP Grid
+#NOTE: study_param_list has higher priority than study_param_limits
+study_param_limits:               #[val_min, val_max, nval, use_log]   
+  - [-4,0,5,True]
+  - [0,1.3,12,False]
+  - [-4,0,5,True]
 
-study_param_limits:
-  - [5.0e-3,5.0e-1,10]
-  - [0,1.3,10]
-  - [0,1,10]
-
-study_param_list:                 #[val1, val2, val3,...]
-  - [5.0e-3,6.0e-3]
-  - [0.4,0.6]
-  - [0.2, 0.7]
+# Specify own values for HP Grid
+study_param_list:                 #[val1, val2, val3,...] 
+  - []
+  - []
+  - []
 
   
 # Data paths

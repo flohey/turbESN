@@ -1,5 +1,5 @@
 #turbESN
-from .core import (_DTYPE, _DEVICE, _LOGGING_FORMAT, ESN)
+from core import (_DTYPE, _DEVICE, _LOGGING_FORMAT, ESN)
 
 #Backends
 import torch

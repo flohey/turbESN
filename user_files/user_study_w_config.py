@@ -15,6 +15,7 @@ import sys
 import os
 import time
 from copy import deepcopy
+import logging
 
 #Backends
 import numpy as np
@@ -38,6 +39,7 @@ from turbESN.core import *
 from turbESN.study import launch_thread_RunturbESN, launch_process_RunturbESN, Callback
 
 
+logging.warning("Using: turbESN v."+turbESN.__version__)
 
 # Load YAML config file
 #---------------------------
@@ -72,18 +74,17 @@ if __name__ == '__main__':
     mode = yaml_config["mode"]
     verbose = yaml_config["verbose"]
 
-    weightGeneration = yaml_config["weightGeneration"]
-
     bias_in = yaml_config["bias_in"]
     bias_out = yaml_config["bias_in"]
     outputInputScaling = yaml_config["outputInputScaling"]
     inputScaling = yaml_config["inputScaling"]
+    feedbackScaling = yaml_config["feedbackScaling"]
     inputDensity = yaml_config["inputDensity"]
     noiseLevel_in = yaml_config["noiseLevel_in"]
     noiseLevel_out = yaml_config["noiseLevel_out"]
     extendedStateStyle = yaml_config["extendedStateStyle"]
-    use_watts_strogatz_reservoir = yaml_config["use_watts_strogatz_reservoir"]
-    ws_p = yaml_config["ws_p"]
+    use_feedback = yaml_config["use_feedback"]
+    weightGeneration = yaml_config["weightGeneration"]
 
     # ESN Data config
     #-------------------
@@ -97,7 +98,8 @@ if __name__ == '__main__':
     #-------------------
     nseed = yaml_config["nseed"]
     randomSeed = range(nseed)                                              
-           
+    esn_ids = range(nseed) 
+
     doRandomSearch = yaml_config["doRandomSearch"]                                               
     study_tuple = yaml_config["study_tuple"]  
     study_param_limits = yaml_config["study_param_limits"]
@@ -158,13 +160,13 @@ if __name__ == '__main__':
         print('Random Search. Seeds: {0}. Studies per seed: {1}\n'.format(nseed, nstudy))
     else:
         study_parameters = []
-        for ii,limits in enumerate(study_param_limits):
+        for ii,limits in enumerate(study_param_limits): 
             
-            # parameter values are read from config
+            # HP grid values are read from config: study_param_list
             if len(study_param_list[ii]) is not None and len(study_param_list[ii]) != 0:
                 param_val = study_param_list[ii]
 
-            # parameter values are computed from limits in config
+            # HP grid is computed from limits in config: study_param_limits
             else:
                 assert len(limits) == 4, "Error: study_param_limits must be of style [value_min, value_max, nvals, use_log]!"
                 x0,x1,nx, use_log = limits
@@ -173,7 +175,11 @@ if __name__ == '__main__':
                     param_val = np.logspace(x0,x1,nx)
                 else:
                     param_val = np.linspace(x0,x1,nx)
-                
+
+                # leakingRate specified for each neuron: take param_val as leakingRate_min values
+                if study_tuple[ii] == "leakingRate_neural":
+                    param_val = [loguniform.rvs(lr_min-1e-9,1,size=(n_reservoir,1)) for lr_min in param_val]
+
             study_parameters.append(param_val)   
 
         study_parameters = tuple(study_parameters)
@@ -192,7 +198,7 @@ if __name__ == '__main__':
     # - data shape: (timesteps, n_input)
     #----------------------------------------------------
     with h5py.File(path_data + filename_data,'r') as f:
-        data = np.array(f.get('encoded_val'))
+        data = np.array(f.get('POD/time_coefficients')).real
 
     data_timesteps, n_input_data = data.shape
 
@@ -239,8 +245,8 @@ if __name__ == '__main__':
             weightGeneration = weightGeneration,
             extendedStateStyle = extendedStateStyle,
             transientTime  = transientTime, 
-            use_watts_strogatz_reservoir = use_watts_strogatz_reservoir,
-            ws_p = ws_p,
+            use_feedback=use_feedback,
+            feedbackScaling=feedbackScaling,
             verbose = verbose)
 
 
@@ -266,7 +272,7 @@ if __name__ == '__main__':
     #----------------------------------------------------
     esn.toTorch()
     esn.save(filepath_esn)
-    CreateHDF5Groups(filepath_esn, randomSeed, nstudy)
+    CreateHDF5Groups(filepath_esn, esn_ids, nstudy)
 
     print(esn)
 
