@@ -107,7 +107,7 @@
 - fixed logging error in SetTrainingData in core.py
 - **implemented feedback weights, where last ESN output is passed to the reservoir**
 
-## Release 0.0.1.9.0.2
+## Release 0.0.1.9.1.2
 ---------------------
 ### 22.08.2022
 - fixed error in verifyReservoirConvergence method in core.py
