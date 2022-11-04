@@ -30,7 +30,9 @@ setup(
     long_description=LONG_DESCRIPTION,
     packages=find_packages(),
     install_requires=['numpy', 'multiprocess', 'h5py', 'scipy'],
-    python_requires=">=3.6.0",
+    include_package_data=True,
+    package_data={NAME: ['*.json']},
+    python_requires=">=3.7.0",
     keywords=['python', 'ESN', 'reservoir computing', 'echo state network', 'recurrent neural network'],
     classifiers=[
         "Development Status :: 1 - Planning",

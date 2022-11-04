@@ -1,0 +1,263 @@
+{
+     "randomSeed": {
+        "INFO": "RNG seed for random reservoir initalization",
+        "SAVE_TO_HDF5": true},
+
+    "esn_start":  {
+        "INFO": "Index of the original data, at which the training output y_train will begin. ",
+        "SAVE_TO_HDF5": true},
+
+    "esn_end": {
+        "INFO": "Index of the original data, at which the testing/validation output y_test will end.",
+        "SAVE_TO_HDF5": true},
+
+    "trainingLength": {
+        "INFO": "no. time stes for the training data set",
+        "SAVE_TO_HDF5": true},
+
+    "testingLength": {
+        "INFO": "no. time stes for the testing data set",
+        "SAVE_TO_HDF5": true},
+
+    "validationLength": {
+        "INFO": "no. time stes for the validation data set",
+        "SAVE_TO_HDF5": true},
+
+    "data_timesteps": {
+        "INFO": "no. time steps the orignal data has",
+        "SAVE_TO_HDF5": true},
+
+    "esn_timesteps": {
+        "INFO": "no. total resulting time steps for the esn ",
+        "SAVE_TO_HDF5": true},
+
+    "n_input":  {
+        "INFO": "input data dimensions",
+        "SAVE_TO_HDF5": true},
+
+    "n_output": {
+        "INFO": "output data dimensions",
+        "SAVE_TO_HDF5": true},
+
+    "n_reservoir": {
+        "INFO": "dimensions of reservoir state and Wres with shape (n_reservoir, n_reservoir)",
+        "SAVE_TO_HDF5": true,
+        "RANGE": [128,8192],
+        "CHANGES_Wres": true,
+        "CHANGES_Win": false,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": false},
+
+    "extendedStateStyle": {
+        "INFO": "format of the extended reservoir state which is used to compute W^out. Takes value: ...",
+        "SAVE_TO_HDF5": true},
+
+    "leakingRate": {
+        "INFO": "factor controlling the leaky integrator formulation (1 -> fully nonlinear, 0 -> fully linear)",
+        "SAVE_TO_HDF5": true,
+        "RANGE": [1e-4,1.0],
+        "CHANGES_Wres": false,
+        "CHANGES_Win": false,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": false},
+
+    "spectralRadius": {
+        "INFO": "maximum absolute eigenvalue of Wres",
+        "SAVE_TO_HDF5": true,
+        "RANGE": [0,2.0],
+        "CHANGES_Wres": true,
+        "CHANGES_Win": false,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": false},
+
+    "reservoirDensity": {
+        "INFO": "fraction of non-zero elements of Wres",
+        "SAVE_TO_HDF5": true,
+        "RANGE": [0.0,1.0],
+        "CHANGES_Wres": true,
+        "CHANGES_Win": false,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": false},
+
+    "regressionParameter": {
+        "INFO": "ridge regression/ penalty parameter of ridge regression",
+        "SAVE_TO_HDF5": true,
+        "RANGE": [1e-6,1e1],
+        "CHANGES_Wres": false,
+        "CHANGES_Win": false,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": false},
+
+    "bias_in": {
+        "INFO": "input bias in the input mapping: Win*[1;u]",
+        "SAVE_TO_HDF5": true,
+        "RANGE": [0.0,1.0],
+        "CHANGES_Wres": false,
+        "CHANGES_Win": true,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": false},
+
+    "bias_out": {
+        "INFO": "output bias in the final output mapping:  y = Wout*[outputbias; outputInputScaling*u; s]",
+        "SAVE_TO_HDF5": true,
+        "RANGE": [0.0,1.0],
+        "CHANGES_Wres": false,
+        "CHANGES_Win": false,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": false},
+
+    "outputInputScaling": {
+        "INFO": "factor by which the input data should be scaled by in the final output mapping: y = Wout*[outputbias; outputInputScaling*u; s]",
+        "SAVE_TO_HDF5": true,
+        "RANGE": [0.0,1.0],
+        "CHANGES_Wres": false,
+        "CHANGES_Win": false,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": false},
+
+    "inputScaling": {
+        "INFO": "scaling of the columns of the input matrix Win",
+        "SAVE_TO_HDF5": true,
+        "RANGE": [1e-3,1e2],
+        "CHANGES_Wres": false,
+        "CHANGES_Win": true,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": false},
+
+    "inputDensity": {
+        "INFO": "fraction of non-zero elements of Win",
+        "SAVE_TO_HDF5": true,
+        "RANGE": [0.0,1.0],
+        "CHANGES_Wres": false,
+        "CHANGES_Win": true,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": false},
+
+    "noiseLevel_in":{
+        "INFO": "amplitude of the gaussian noise term inside the activation function",
+        "SAVE_TO_HDF5": true,
+        "RANGE": [0.0,1e-1],
+        "CHANGES_Wres": false,
+        "CHANGES_Win": false,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": false},
+   
+     "noiseLevel_out":{
+        "INFO": "amplitude of the gaussian noise term outside the activation function",
+        "SAVE_TO_HDF5": true,
+        "RANGE": [0.0,1e-3],
+        "CHANGES_Wres": false,
+        "CHANGES_Win": false,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": false},
+    "mode":{
+            "INFO": "ESN prediction mode",
+            "SAVE_TO_HDF5": true,
+            "VALUES": ["auto", "teacher", "semi-teacher"], 
+            "CHANGES_Wres": false,
+            "CHANGES_Win": false,
+            "CHANGES_Wout": false,
+            "CHANGES_Wfb": false},
+
+    "weightGeneration":{
+        "INFO": "method the random weights Win, Wres, Wfb should be initialized",
+        "SAVE_TO_HDF5": true,
+        "VALUES": ["uniform", "normal"], 
+        "CHANGES_Wres": true,
+        "CHANGES_Win": true,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": true},
+
+    "transientTime":{
+        "INFO": "washout length for reservoir states",
+        "SAVE_TO_HDF5": true},
+
+    "use_feedback":{
+        "INFO": "if True, the reservoir uses feedback weights",
+        "SAVE_TO_HDF5": true,
+        "VALUES": [true, false],
+        "CHANGES_Wres": false,
+        "CHANGES_Win": false,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": true},
+
+    "feedbackScaling":{
+        "INFO": "scaling of the columns of the feedback matrix Wfb",
+        "SAVE_TO_HDF5": true,
+        "RANGE": [1e-3,1e2],
+        "CHANGES_Wres": false,
+        "CHANGES_Win": false,
+        "CHANGES_Wout": true,
+        "CHANGES_Wfb": true},
+
+    "fit_method":{
+            "INFO": "method of how Wout is computed",
+            "SAVE_TO_HDF5": true,
+            "VALUES": ["tikhonov","pinv"],
+            "CHANGES_Wres": false,
+            "CHANGES_Win": false,
+            "CHANGES_Wout": true,
+            "CHANGES_Wfb": false},
+
+        
+    "u_train":{
+        "INFO":  "ESN training input data, shape (trainingLength, n_input)",
+        "SAVE_TO_HDF5": true},
+
+    "y_train":{
+        "INFO":  "ESN training output data, shape (trainingLength, n_output)",
+        "SAVE_TO_HDF5": true},
+    
+    "u_test":{
+        "INFO":  "ESN testing input data, shape (testingLength, n_input)",
+        "SAVE_TO_HDF5": true},
+
+     "y_test":{
+        "INFO":  "ESN testing output data, shape (testingLength, n_output)",
+        "SAVE_TO_HDF5": true},
+ 
+    "u_val":{
+        "INFO":  "ESN validation input data, shape (validationLength, n_input)",
+        "SAVE_TO_HDF5": true},
+
+     "y_val":{
+        "INFO":  "ESN validation output data, shape (validationLength, n_output)",
+        "SAVE_TO_HDF5": true},
+ 
+    "test_init_input":{
+        "INFO":  "initial input step for the start of the testing phase, shape (1, n_input)",
+        "SAVE_TO_HDF5": false},
+        
+    "val_init_input":{
+        "INFO":  "initial input step for the start of the validation phase, shape (1, n_input)",
+        "SAVE_TO_HDF5": false},
+
+    "Win":{
+            "INFO":  "Input weight matrix, shape (n_reservoir,1+n_input)",
+            "SAVE_TO_HDF5": false},
+
+    "Wres":{
+            "INFO":  "Reservoir weight matrix, shape (n_reservoir,n_reservoir)",
+            "SAVE_TO_HDF5": false},
+
+    "Wfb":{
+            "INFO":  "Feedback weight matrix, shape (n_reservoir, n_output)",
+            "SAVE_TO_HDF5": false},
+
+    "Wout":{
+            "INFO":  "Output weight matrix, shape (n_output, 1+n_input+n_reservoir)",
+            "SAVE_TO_HDF5": false},
+
+    "x_train":{
+        "INFO":  "(extended) reservoir state matrix of training phase, shape (1+n_input+n_reservoir,trainingLength-transientTime) or (1+n_reservoir+n_reservoir,trainingLength-transientTime)",
+        "SAVE_TO_HDF5": false},
+    
+    "x_test":{
+        "INFO":  "(extended) reservoir state matrix of testing phase, shape (1+n_input+n_reservoir,testingLength) or (1+n_reservoir+n_reservoir,testingLength)",
+        "SAVE_TO_HDF5": false},
+    
+    "x_val":{
+        "INFO":  "(extended) reservoir state matrix of validation phase, shape (1+n_input+n_reservoir,validationLength) or (1+n_reservoir+n_reservoir,validationLength)",
+        "SAVE_TO_HDF5": false}
+    
+} 

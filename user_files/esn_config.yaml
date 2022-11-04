@@ -1,3 +1,6 @@
+# Notes
+# - float exponentials must be written with decimals and sign, e.g. 1.0e+2 not 1e2
+
 # Multiprocessing
 #-----------------------
 MAX_PROC: null
@@ -6,10 +9,11 @@ MAX_THREADS: 3
 # case params
 #---------------------------
 #/
+data_str: ""                  #string that wil be prepended to filename
 
 # ESN Setting
 #---------------------------
-n_reservoir: 2048
+n_reservoir: 512
 leakingRate: 1.0
 spectralRadius:  0.99
 reservoirDensity: 0.2
@@ -23,51 +27,49 @@ outputInputScaling: 0
 inputScaling: 1
 feedbackScaling: 1
 inputDensity: 1
-noiseLevel_in: 1e-6
-noiseLevel_out: 0
+noiseLevel_in: 1.0e-6
+noiseLevel_out: 0.0
 extendedStateStyle: "default"
 weightGeneration: "uniform"
-use_feedback: False
+fit_method: 'tikhonov'
+use_feedback: True
 
-# ESN Data Layout
+# Data Layout
 #---------------------------
+esn_start: 1
+n_input: 16
+n_output: 16                           #will be ignored if mode = "auto"
 dataScaling: 1
 trainingLength: 750
-testingLength:  700
-validationLength: 400
+testingLength:  2000
+validationLength: 100
 transientTime: 50
 
 # Hyperparameter Grid & Random Search
 #---------------------------
-nseed: 10                                        
-doRandomSearch: False   #random search                                    
+nseed: 24                                        
+do_random_search: False   #random search                                    
 nstudy: 100             #random search
-use_log_scale: True     #random search
 
 # Specify HP to be studied (first one moving slowest)
 study_tuple:                     
-  - "regressionParameter"
+  - "leakingRate"
   - "spectralRadius"
-  - "leakingRate_neural"
  
 # Specify HP Grid
 #NOTE: study_param_list has higher priority than study_param_limits
-study_param_limits:               #[val_min, val_max, nval, use_log]   
-  - [-4,0,5,True]
-  - [0,1.3,12,False]
-  - [-4,0,5,True]
+study_param_limits:               #[val_min, val_max, nval, use_log]   (nval will be ignored if do_random_search=True)
+  - [0,1.0,10,False]
+  - [0,1.0,10,False]
 
 # Specify own values for HP Grid
 study_param_list:                 #[val1, val2, val3,...] 
   - []
   - []
-  - []
-
   
 # Data paths
 #---------------------------
-path_data:     ''                       
-filename_data: ''
-path_esn:      ''                          
-
-comment_str: ""
+path_data:     '/usr/scratch4/flhe4523/rbc2d/A4Ra1e5Pr10_fs/pod/'                       
+filename_data: 'A4Ra1e5Pr10_fs_pod_nt10000.hdf5'
+path_esn:      '/usr/scratch4/flhe4523/rbc2d/A4Ra1e5Pr10_fs/turbESN/'                          
+subdir_esn: ""   #subdirectory where ESN results are saved to: path_esn/comment_str/

@@ -6,8 +6,9 @@ from .util import (
     ComputeWassersteinDistance
     )
 
-from .core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT)
+from .core import ESN
 from .cross_validation import CrossValidation
+from ._modes import (_DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT, _ID_PRINT)
 
 #Parallelization
 import multiprocessing as mp
@@ -27,16 +28,25 @@ import torch
 
 #Data structure
 import h5py
+import json
 
-_ID_PRINT = 4
+# Read hyperparameter.json
+import importlib.resources as pkg_resources
+with pkg_resources.path(__package__,'hyperparameters.json') as hp_dict_path:
+    with open(hp_dict_path,'r') as f:
+        HP_dict = json.load(f)   
 #--------------------------------------------------------------------------------------------------------
 def launch_thread_RunturbESN(thread_args):
     ''' Runs an ESN with given esn.
     INPUT:
-        esn    - ESN class object containing the reservoir parameters and training & validation/testing data sets.
-        config_istudy - study parameter configuration for this ESN run
-        study_tuple   - set containing the names of the parameter that are studied
-        istudy        - study ID
+        esn                - ESN class object containing the reservoir parameters and training & validation/testing data sets.
+        config_istudy      - study parameter configuration for this ESN run
+        study_tuple        - set containing the names of the parameter that are studied
+        istudy             - study ID
+        nstudy             - no. studies
+        recompute_Win      - whether input matrix must be initialized
+        recompute_Wres     - whether reservoir matrix must be initialized
+        recompute_Wfb      - whether feedback matrix must be initialized
 
     RETURN:
         istudy     - Study ID
@@ -45,14 +55,16 @@ def launch_thread_RunturbESN(thread_args):
         mse_val    - mean square error of reservoir output (to validation data set y_val). Mean w.r.t. timestep-axis. 
         y_pred_test- testing reseroir outputs, produced by the given reservoir specified in esn.
         y_pred_val - validation reseroir outputs, produced by the given rtesting
+        study_dict - dict specifying the new hyperparameter setting of the ESN 
      '''
 
-    esn, config_istudy, study_tuple, istudy, nstudy = thread_args
+    esn, config_istudy, study_tuple, istudy, nstudy, recompute_Win, recompute_Wres, recompute_Wfb = thread_args
     torch.manual_seed(esn.randomSeed)
-
     study_dict = esn.SetStudyParameters(config_istudy, study_tuple)
-    mse_train, mse_test, mse_val, y_pred_test, y_pred_val = RunturbESN(esn)
-    #wd_test = ComputeWassersteinDistance(esn.y_test, y_pred)
+    mse_train, mse_test, mse_val, y_pred_test, y_pred_val = RunturbESN(esn,
+                                                                       recompute_Win=recompute_Win,
+                                                                       recompute_Wres=recompute_Wres,
+                                                                       recompute_Wfb=recompute_Wfb)
 
     if esn.id % _ID_PRINT == 0: 
         logging.warn("ID {0}: study {1}/{2} done.".format(esn.id, istudy+1, nstudy))
@@ -88,21 +100,42 @@ def launch_process_RunturbESN(launch_thread_args) -> Tuple[int, list, int, str]:
     #----------------------------------
     torch.manual_seed(esn.randomSeed)             
 
+    #------------------------------------------
+    #Assess whether weights must be recomputed
+    #------------------------------------------
+    recompute_Win  = False
+    recompute_Wres = False
+    recompute_Wfb  = False
+
+    for param in study_tuple:
+        if HP_dict[param]["CHANGES_Win"]:
+            recompute_Win = True
+        if HP_dict[param]["CHANGES_Wres"]:
+            recompute_Wres = True
+        if HP_dict[param]["CHANGES_Wfb"]:
+            recompute_Wfb = True
+        
+    if not recompute_Win:
+        esn.createInputMatrix()
+    if not recompute_Wres:
+        esn.createReservoirMatrix()
+    if not recompute_Wfb:
+        esn.createFeebackMatrix()
+
     #----------------------------------
     #Launch ThreadPool
     #----------------------------------
-    
     executor = futures.ThreadPoolExecutor(MAX_THREADS)
+
     with executor as ex:
         study_counter = 0
-        while study_counter < nstudy:   
-
+        while study_counter < nstudy:
+            
+            num_threads = MAX_THREADS
             if (nstudy-study_counter) < MAX_THREADS:
                 num_threads  = nstudy-study_counter
-            else:
-                num_threads = MAX_THREADS
-
-            thread_results = ex.map(launch_thread_RunturbESN, ([deepcopy(esn), config[istudy], study_tuple, istudy, nstudy] 
+                
+            thread_results = ex.map(launch_thread_RunturbESN, ([deepcopy(esn), config[istudy], study_tuple, istudy, nstudy,recompute_Win,recompute_Wres,recompute_Wfb] 
                                                  for istudy 
                                                  in np.arange(study_counter,study_counter+num_threads))
                                     )

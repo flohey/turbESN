@@ -8,7 +8,6 @@
 
 #Parallelization
 import multiprocessing as mp
-from concurrent import futures
 
 #Misc. 
 import sys
@@ -30,9 +29,9 @@ import turbESN
 from turbESN.util import (
     PrepareTeacherData,  
     PreparePredictorData, 
-    InitStudyOrder,
-    CreateHDF5Groups, 
-    InitRandomSearchStudyOrder,
+    create_hdf5_groups, 
+    init_random_search,
+    init_grid_search,
     minmax_scaling
     )
 from turbESN.core import *
@@ -56,7 +55,7 @@ if MAX_PROC is None:
 if __name__ == '__main__':    
 
     #----------------------------------------------------
-    #Load ESN Config 
+    #1. Load ESN Config 
     #----------------------------------------------------
     print("Reading yaml-config file.")
 
@@ -64,7 +63,7 @@ if __name__ == '__main__':
     #----------------------------
 
 
-    # ESN config
+    # ESN (general)
     #-------------------
     n_reservoir = yaml_config["n_reservoir"]
     leakingRate = yaml_config["leakingRate"]
@@ -85,22 +84,24 @@ if __name__ == '__main__':
     extendedStateStyle = yaml_config["extendedStateStyle"]
     use_feedback = yaml_config["use_feedback"]
     weightGeneration = yaml_config["weightGeneration"]
+    fit_method = yaml_config["fit_method"]
 
-    # ESN Data config
+    # ESN (data layout)
     #-------------------
     dataScaling = yaml_config["dataScaling"]
     trainingLength = yaml_config["trainingLength"]
     testingLength = yaml_config["testingLength"]
     validationLength = yaml_config["validationLength"]
     transientTime = yaml_config["transientTime"]
-    
-    # ESN Study config
+    esn_start = yaml_config["esn_start"]
+
+    # ESN (study)
     #-------------------
     nseed = yaml_config["nseed"]
     randomSeed = range(nseed)                                              
     esn_ids = range(nseed) 
 
-    doRandomSearch = yaml_config["doRandomSearch"]                                               
+                                                
     study_tuple = yaml_config["study_tuple"]  
     study_param_limits = yaml_config["study_param_limits"]
     study_param_list = yaml_config["study_param_list"]
@@ -109,116 +110,107 @@ if __name__ == '__main__':
         study_param_list = [None for _ in study_tuple]
     
     assert len(study_param_list) == len(study_tuple), "Error: study_param_list must have same length as study_tuple!"
+    do_random_search = yaml_config["do_random_search"]   
 
     # Path config
     #-------------------
     path_data =  yaml_config["path_data"]                      
     filename_data = yaml_config["filename_data"]
     path_esn = yaml_config["path_esn"]                       
-    comment_str = yaml_config["comment_str"]
+    subdir_esn = yaml_config["subdir_esn"]
 
     #----------------------------------------------------
-    #PATH PARAMETERS
+    # 2. PATH PARAMETERS
     # - specify where the study should be saved to
     # - specify where the data is located
     #----------------------------------------------------
 
     # Prepare filename
     #-------------------
-    data_str = f''
+    data_str =  yaml_config["data_str"]
+    if data_str != "":
+        data_str += "_"
 
     study_str = ""
     for param_str in study_tuple:
-        study_str += "_"+param_str 
+        study_str += param_str +"_"
 
-    N_str = f"_N{n_reservoir}"
-    D_str = "_D{0:.1}".format(reservoirDensity).replace('.','')
-    regParam_str = "_regParam{0:.1e}".format(regressionParameter).replace('-','').replace('+','').replace('.','').replace('0','')
-    dS_str = f"_dS{dataScaling}"
-    TL_str = "_TL{0:.1e}".format(trainingLength).replace('-','').replace('+','').replace('.','').replace('0','')
+    N_str = f"N{n_reservoir}_"
+    D_str = "D{0:.1}_".format(reservoirDensity).replace('.','')
+    regParam_str = "regParam{0:.1e}_".format(regressionParameter).replace('-','').replace('+','').replace('.','').replace('0','')
+    SR_str = "SR{0:.2}_".format(spectralRadius).replace('.','')
+    LR_str = "LR{0:.2}_".format(leakingRate).replace('.','')
+    dS_str = f"dS{dataScaling}_"
+    esn_start_str = f"esn_start{esn_start}_"
+    TL_str = "TL{0:.1e}".format(trainingLength).replace('-','').replace('+','').replace('.','').replace('0','')
 
-    # Create filename
-    #-------------------
-    filename_esn = filename_data[:-5] + data_str + study_str + N_str + D_str + regParam_str + dS_str + TL_str  + comment_str + '.hdf5'
-    filepath_esn = path_esn + filename_esn
+    filename_esn = data_str + study_str + N_str + D_str + SR_str + LR_str + regParam_str + dS_str + esn_start_str + TL_str + '.hdf5'
+    path_esn = os.path.join(path_esn,subdir_esn)
+    os.makedirs(path_esn,exist_ok=True)
+    filepath_esn = os.path.join(path_esn,filename_esn)
 
     #----------------------------------------------------
-    #STUDY PARAMETERS
-    # - choose grid or random search mode
+    # 3.INIT GRID/RANDOM SEARCH
     # - specify hyperparameters to study and their range
     #----------------------------------------------------
     #----------------------------------------------------        
-
-    if doRandomSearch:
-        nstudy = yaml_config["nstudy"]
-        use_log_scale = yaml_config["use_log_scale"]
-
-        if len(study_tuple) == len(study_param_limits):                #only use if correctly specified
-            HP_range_dict = dict(zip(study_tuple,study_param_limits))
-        
-        config = InitRandomSearchStudyOrder(nstudy, study_tuple,HP_range_dict=HP_range_dict, use_log_scale=use_log_scale)
-        print('Random Search. Seeds: {0}. Studies per seed: {1}\n'.format(nseed, nstudy))
+    if not do_random_search:
+        print("Initializing grid search...\n")
+        config, nstudy  = init_grid_search(study_tuple, study_param_limits, study_param_list)
+        print('Seeds: {0}. Studies per seed: {1}\n'.format(nseed, nstudy))
     else:
-        study_parameters = []
-        for ii,limits in enumerate(study_param_limits): 
-            
-            # HP grid values are read from config: study_param_list
-            if len(study_param_list[ii]) is not None and len(study_param_list[ii]) != 0:
-                param_val = study_param_list[ii]
+        print("Initializing random search...\n")
+        nstudy = yaml_config["nstudy"]
 
-            # HP grid is computed from limits in config: study_param_limits
-            else:
-                assert len(limits) == 4, "Error: study_param_limits must be of style [value_min, value_max, nvals, use_log]!"
-                x0,x1,nx, use_log = limits
+        config, nstudy = init_random_search(nstudy, study_tuple,limits=study_param_limits)
+        print('Seeds: {0}. Studies per seed: {1}\n'.format(nseed, nstudy))
 
-                if use_log:
-                    param_val = np.logspace(x0,x1,nx)
-                else:
-                    param_val = np.linspace(x0,x1,nx)
-
-                # leakingRate specified for each neuron: take param_val as leakingRate_min values
-                if study_tuple[ii] == "leakingRate_neural":
-                    param_val = [loguniform.rvs(lr_min-1e-9,1,size=(n_reservoir,1)) for lr_min in param_val]
-
-            study_parameters.append(param_val)   
-
-        study_parameters = tuple(study_parameters)
-
-        nstudyparameters = len(study_parameters)
-        assert nstudyparameters == len(study_tuple),'''Error: Length of study_tuple ({0}) 
-                                                       does not match no. study parameters ({1})!\n'''.format(len(study_tuple), nstudyparameters)
-
-        nstudy = np.prod([len(param_arr) for param_arr in study_parameters])
-        config = InitStudyOrder(nstudy, study_parameters) 
-        print('Grid Search. Seeds: {0}. Studies per seed: {1}\n'.format(nseed, nstudy))
-    
     #----------------------------------------------------
-    #DATA PARAMETERS
+    # 4. INIT ESN DATA
     # - import data 
-    # - data shape: (timesteps, n_input)
+    # - scale data
     #----------------------------------------------------
+    print("Importing data")
     with h5py.File(path_data + filename_data,'r') as f:
-        data = np.array(f.get('POD/time_coefficients')).real
+        data = np.array(f["time_coefficients"])
 
-    data_timesteps, n_input_data = data.shape
+    data_timesteps, n_input_data= data.shape
+    
+    n_input = yaml_config["n_input"]
+    if mode == "auto":
+        n_output = n_input
+        data_in = data[:,:n_input]
+    elif mode == "teacher":
+        try:
+            n_output = yaml_config["n_output"]
+        except KeyError:
+            logging.fatal("In teacher mode: specify n_input & n_output in yaml config.")
+            exit()
 
+    data_in = data[:,:n_input]
+    data_out = data[:,:n_output]
+    
+    print(f"Using ESN in mode {mode}")
+    print(f"n_input = {n_input}, n_output = {n_output}")
     # Data parameters
     #------------------
-    esn_start = data_timesteps - (trainingLength+testingLength+validationLength)
-    esn_end = data_timesteps 
-    n_input = n_input_data
-    n_output = n_input_data
+    esn_end   = esn_start + (trainingLength+testingLength+validationLength)
+    assert esn_end <= data_timesteps, f"esn_end ({esn_end}) must be <= available data timesteps ({data_timesteps})"
 
     #normalize data to [-dataScaling,dataScaling] (along time-axis in training phase)
-    x_min = np.min(data[esn_start:esn_start+trainingLength],axis=0)
-    x_max = np.max(data[esn_start:esn_start+trainingLength],axis=0)
-    data_scaled = minmax_scaling(data, x_min=x_min, x_max=x_max, dataScaling=dataScaling)
+    x_min = np.min(data_in[esn_start:esn_start+trainingLength],axis=0)
+    x_max = np.max(data_in[esn_start:esn_start+trainingLength],axis=0)
+    data_in_scaled = minmax_scaling(data_in,x_min=x_min,x_max=x_max,dataScaling=dataScaling) 
+
+    x_min = np.min(data_out[esn_start:esn_start+trainingLength],axis=0)
+    x_max = np.max(data_out[esn_start:esn_start+trainingLength],axis=0)
+    data_out_scaled = minmax_scaling(data_out,x_min=x_min,x_max=x_max,dataScaling=dataScaling) 
 
     #----------------------------------------------------
-    #ESN PARAMETERS
+    # 5. ESN PARAMETERS
     # - create ESN
-    # - adapt ESN setting
-    # - adapt ESN training and testing data
+    # - fix ESN HP
+    # - set ESN training and testing data
     #----------------------------------------------------
     esn = ESN(randomSeed = randomSeed,
             esn_start = esn_start,
@@ -247,35 +239,54 @@ if __name__ == '__main__':
             transientTime  = transientTime, 
             use_feedback=use_feedback,
             feedbackScaling=feedbackScaling,
+            fit_method=fit_method,
             verbose = verbose)
 
 
-    u_train, y_train, u_test, y_test, u_val, y_val = PreparePredictorData(  data=data_scaled,
-                                                                            n_input=n_input, 
-                                                                            trainingLength=trainingLength, 
-                                                                            testingLength=testingLength, 
-                                                                            esn_start=esn_start, 
-                                                                            esn_end=esn_end,
-                                                                            validationLength=validationLength)
-                                                            
+    if mode == "auto":
+        u_train, y_train, u_test, y_test, u_val, y_val = PreparePredictorData(  data=data_in_scaled,
+                                                                                n_input=n_input, 
+                                                                                trainingLength=trainingLength, 
+                                                                                testingLength=testingLength, 
+                                                                                esn_start=esn_start, 
+                                                                                esn_end=esn_end,
+                                                                                validationLength=validationLength)
+
+    elif mode == "teacher":
+        u_train, y_train, u_test, y_test, u_val, y_val = PrepareTeacherData(  data_in=data_in_scaled,
+                                                                                data_out=data_out_scaled,
+                                                                                n_input=n_input, 
+                                                                                n_output=n_output,
+                                                                                trainingLength=trainingLength, 
+                                                                                testingLength=testingLength, 
+                                                                                esn_start=esn_start, 
+                                                                                esn_end=esn_end,
+                                                                                validationLength=validationLength)
+   
     esn.SetTrainingData(u_train=u_train, y_train=y_train)
-    esn.SetTestingData(y_test=y_test, pred_init_input= y_train[-1:,:], u_test = u_test)
+    esn.SetTestingData(y_test=y_test, test_init_input= y_train[-1:,:], u_test = u_test)
     esn.SetValidationData(y_val=y_val, u_val = u_val, val_init_input=y_test[-1:,:]) 
 
-
     #----------------------------------------------------
-    #RUN STUDY 
-    # - copy ESN parameters
-    # - change seed
+    # 5. RUN STUDY 
+    # - copy ESN parameters to each subprocess
     # - distribute different seeds among processes
     # - distribute different ESN settings among threads
     #----------------------------------------------------
     esn.toTorch()
     esn.save(filepath_esn)
-    CreateHDF5Groups(filepath_esn, esn_ids, nstudy)
+    create_hdf5_groups(filepath_esn, esn_ids, nstudy)
+    
+    # Check echo state property
+    esn.createWeightMatrices()
+    estimated_transientTime = esn.verify_echo_state_property(u=u_train,y=y_train)
+    print("Estimated transientTime = {0}".format(estimated_transientTime))
 
+    # Print ESN info
     print(esn)
 
+
+    # Start study
     time_start = time.time()
     pool = mp.Pool(processes=MAX_PROC)
     with h5py.File(filepath_esn,'a') as f: 

@@ -9,7 +9,7 @@ In order to install the package just use `pip3 install turbESN`. Here you can fi
 ## Requirements
 Stable for
 - `python `>=  3.6.0
-- `torch`  >= 1.8.1
+- `torch`  >= 1.9.0
 - `numpy`  >= 1.20.1
 - `h5py`   >= 2.10.0 
 
@@ -30,3 +30,4 @@ The Echo State Network (ESN) is a certain implementation of RC. Its architecture
 
 - F. Heyder and J. P. Mellado and J. Schumacher - arXiv:2108.06195: 
   "Echo state network models of a two-dimensional convective boundary layer "
+

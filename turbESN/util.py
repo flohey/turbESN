@@ -4,10 +4,12 @@ import torch
 
 #save data structure
 import h5py 
+import json
 
 #turbESN
-from .core import (ESN, _DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT)
+from .core import ESN
 from .cross_validation import CrossValidation
+from ._modes import (_DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT, _MSE_DEFAULT)
 
 #misc
 import sys
@@ -20,7 +22,11 @@ from scipy.stats import wasserstein_distance
 from scipy.stats import loguniform, uniform
 
 
-_MSE_DEFAULT = 1e6  #default value for the mean square error, if error occurs
+# Read hyperparameter.json
+import importlib.resources as pkg_resources
+with pkg_resources.path(__package__,'hyperparameters.json') as hp_dict_path:
+    with open(hp_dict_path,'r') as f:
+        HP_dict = json.load(f)  
 ###########################################################################################################
 
 #                             PRE-PROCESSING/ IMPORTING
@@ -130,34 +136,34 @@ def PrepareTeacherData(data_in: Union[np.ndarray, torch.Tensor],
     #return torch.as_tensor(u_train, dtype = _DTYPE), torch.as_tensor(y_train, dtype = _DTYPE),torch.as_tensor(u_test, dtype = _DTYPE),torch.as_tensor(y_test, dtype = _DTYPE), torch.as_tensor(u_val, dtype = _DTYPE),torch.as_tensor(y_val, dtype = _DTYPE)
 
 #--------------------------------------------------------------------------
-def Recursion(iparam: int, iterators: np.ndarray, study_parameters: tuple):
+def Recursion(iparam: int, iterators: np.ndarray, study_tuple: tuple):
     ''' Iterates the iterators which are used to change the hyperparmeters. 
-        Makes sure that all combinations of the parameters in study_parameters are used.
+        Makes sure that all combinations of the parameters in study_tuple are used.
 
         INPUT:
             iparam           - index which defines the hyperparameter that is changed
-            iterators        - iterator that defines the no. ESNs that have been run with changing one hyperparameter (study_parameters[iparam]) 
-            study_parameters - tuple specifying the range of the parameters that are studies
+            iterators        - iterator that defines the no. ESNs that have been run with changing one hyperparameter (study_tuple[iparam]) 
+            study_tuple      - tuple specifying the range of the parameters that are studies
 
     FH 22.03.21: moved function from esn_user_mp.py/esn_user_thread.py to this file
     '''
     
     #if iterator associated with iparam hasn't reached final value --> increment
-    if iterators[iparam] < len(study_parameters[iparam])-1:
+    if iterators[iparam] < len(study_tuple[iparam])-1:
         iterators[iparam] +=1
             
     #if iterator associated with iparam has reached final value --> reset iterator and increment/reset higher level iterator associated with iparam-1.
     else:
         iterators[iparam] = 0
-        Recursion(iparam-1,iterators,study_parameters)
+        Recursion(iparam-1,iterators,study_tuple)
 
 #--------------------------------------------------------------------------
-def InitStudyOrder(nstudy: int, study_parameters: tuple) -> list:
+def init_study_order(nstudy: int, study_parameters: list) -> list:
     ''' Initializes the study parameter settings into an array.
 
     INPUT:
         nstudy           - number of different reservoir settings that were studied. If nstudy = None, the number is deduced from the file.
-        study_parameters - tuple specifying the values of the parameters that are studied
+        study_parameters - list specifying the values of the parameters that are studied
 
     RETURN: 
         config - list indicating the parameter setting for given study
@@ -190,11 +196,92 @@ def InitStudyOrder(nstudy: int, study_parameters: tuple) -> list:
     return config
 
 #--------------------------------------------------------------------------
+def init_random_search(nstudy: int, study_tuple: tuple, limits: list = []) -> list:
+    ''' Initializes the hyperparameter study parameter settings for a random search. 
+        Each of the nstudy settings is given by an entry of the returned list config.
+
+    INPUT:
+        nstudy           - number of different reservoir setting that should be studied
+        study_tuple      - tuple specifying the parameters that are studied
+        limits           - user specified range values of hyperparameters in study_tuple: [val_min, val_max, nval, use_log]  
+    RETURN: 
+        config - array indicating the parameter setting for given study
+        nstudy - number of different reservoir setting that should be studied
+    '''
+
+    if len(study_tuple) == len(limits):               
+        HP_range_dict = dict(zip(study_tuple,limits))
+
+    else:
+        # default: use standard values & log spacing 
+        HP_range_dict = {param: list(HP_dict[param]["RANGE"])+[0,True] for param in study_tuple}
+
+    config = []
+
+    for ii in range(nstudy):
+        setting = []
+        for iparam,param in enumerate(study_tuple):
+
+            min_val, max_val, _, use_log_scale = HP_range_dict[param]
+
+            if use_log_scale:
+                value = loguniform.rvs(min_val,max_val,size = 1)[0]
+            else:
+                 value = uniform.rvs(min_val,max_val,size = 1)[0]
+
+            if param == 'n_reservoir':
+                value = int(value)
+
+            setting.append(value)
+        config.append(setting)
+    
+    return config, nstudy
+
+#--------------------------------------------------------------------------
+def init_grid_search(study_tuple, limits, lists):
+    ''' Initializes the hyperparameter study parameter settings for a grid search. 
+
+    INPUT:
+        study_tuple      - tuple specifying the parameters that are studied
+        limits           - user specified range values of hyperparameters in study_tuple: [val_min, val_max, nval, use_log]  
+        limits           - user specified values of the hyperparameters in study_tuple:   [val1, val2, val3,...] 
+        
+    RETURN: 
+        config - array indicating the parameter setting for given study
+        nstudy - number of different reservoir setting that should be studied
+    '''
+
+    study_parameters = []
+    for ii,limit in enumerate(limits): 
+        
+        # HP grid values are read from user specified values
+        if len(lists[ii]) is not None and len(lists[ii]) != 0:
+            param_val = lists[ii]
+
+        # HP grid is computed from user specified ranges
+        else:
+            assert len(limit) == 4, "Error: limits must be of style [value_min, value_max, nvals, use_log]!"
+            xmin, xmax, nx, use_log = limit
+
+            if use_log:
+                param_val = np.logspace(xmin,xmax,nx)
+            else:
+                param_val = np.linspace(xmin,xmax,nx)
+
+        study_parameters.append(param_val)   
+
+    assert len(study_parameters) == len(study_tuple),f"Error: Length of study_tuple ({len(study_tuple)})  does not match no. study parameters ({len(study_parameters)})!\n"
+    nstudy = np.prod([len(param_arr) for param_arr in study_parameters])
+    config = init_study_order(nstudy, tuple(study_parameters)) 
+
+    return config, nstudy
+
+#--------------------------------------------------------------------------
 #FH 30.03.2022: added check_user_input (prev. in RunturbESN)
 def check_user_input(esn, u_train: Union[np.ndarray, torch.Tensor] = None, 
                     y_train: Union[np.ndarray, torch.Tensor] = None, 
                     y_test: Union[np.ndarray, torch.Tensor] = None, 
-                    pred_init_input: Union[np.ndarray, torch.Tensor] = None, 
+                    test_init_input: Union[np.ndarray, torch.Tensor] = None, 
                     u_test: Union[np.ndarray, torch.Tensor] = None, 
                     u_val: Union[np.ndarray, torch.Tensor] = None, 
                     y_val: Union[np.ndarray, torch.Tensor] = None,
@@ -229,15 +316,15 @@ def check_user_input(esn, u_train: Union[np.ndarray, torch.Tensor] = None,
                 logging.error('Testing input time dimension ({0}) does not match ESN testingLength ({1}).'.format(u_test.shape[0],esn.testingLength))
 
 
-    if pred_init_input is not None:
-        if pred_init_input.dtype is not _DTYPE:
-            pred_init_input = torch.as_tensor(pred_init_input, dtype = _DTYPE)
-        if pred_init_input.device is not esn.device:
-            pred_init_input.to(esn.device)
+    if test_init_input is not None:
+        if test_init_input.dtype is not _DTYPE:
+            test_init_input = torch.as_tensor(test_init_input, dtype = _DTYPE)
+        if test_init_input.device is not esn.device:
+            test_init_input.to(esn.device)
 
     if None not in [u_train, y_train, y_test]:
         esn.SetTrainingData(u_train=u_train, y_train=y_train)
-        esn.SetTestingData(y_test=y_test, pred_init_input=pred_init_input, u_test=u_test)
+        esn.SetTestingData(y_test=y_test, test_init_input=test_init_input, u_test=u_test)
 
     if None not in [u_val, y_val]:
         if u_pre_val is not None:
@@ -286,8 +373,23 @@ def minmax_scaling(x, x_min=None,x_max=None, dataScaling=1):
     x_scaled *=2*dataScaling
 
     return x_scaled
+#--------------------------------------------------------------------------
 
+def undo_minmax_scaling(x, x_min,x_max, dataScaling=1):
+    '''
+    Reverses min-max scaling.
 
+    INPUT:
+        x           - minmax-scaled data, shape: (timesteps, modes) 
+        x_min       - min value of data unscaled x
+        x_max       - max value of data unscaled x 
+        dataScaling - scaling factor
+
+    RETURN:
+        x_unscaled - data in original range(x_min,x_max)
+    '''
+
+    return 0.5*(x/dataScaling+1)*(x_max-x_min)+x_min
 ###########################################################################################################
 
 #                            RUNNING AN ESN
@@ -297,12 +399,15 @@ def minmax_scaling(x, x_min=None,x_max=None, dataScaling=1):
 def RunturbESN(esn, u_train: Union[np.ndarray, torch.Tensor]=None, 
                     y_train: Union[np.ndarray, torch.Tensor]=None, 
                     y_test: Union[np.ndarray, torch.Tensor]=None, 
-                    pred_init_input: Union[np.ndarray, torch.Tensor]=None, 
+                    test_init_input: Union[np.ndarray, torch.Tensor]=None, 
                     u_test: Union[np.ndarray, torch.Tensor]=None, 
                     index_list_auto: list = [], index_list_teacher: list = [],
                     u_val: Union[np.ndarray, torch.Tensor]=None,
                     y_val: Union[np.ndarray, torch.Tensor]=None,
-                    u_pre_val: Union[np.ndarray, torch.Tensor]=None) -> Tuple[torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor]:
+                    u_pre_val: Union[np.ndarray, torch.Tensor]=None,
+                    recompute_Win: bool = True,
+                    recompute_Wres: bool = True,
+                    recompute_Wfb: bool = True) -> Tuple[torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor]:
 
     ''' Runs the turbulent Echo State Network (turbESN) with the specified parameters. 
         The training and testing data must be specfied in the argument or in the esn object.
@@ -314,13 +419,16 @@ def RunturbESN(esn, u_train: Union[np.ndarray, torch.Tensor]=None,
             y_train            - training output (optional if esn.y_train not None)
             u_test             - testing input (optional if esn.u_test not None)
             y_test             - testing output (optional if esn.y_test not None)
-            pred_init_input    - initial input in testing phase from which prediction start
+            test_init_input    - initial input in testing phase from which prediction start
             index_list_auto    - indices of the modes which are passed back as new input (only if esn.mode = _ESN_MODES[2])
             index_list_teacher - indices of the modes which are supplied by a teacher signal (only if esn.mode = _ESN_MODES[2])
             u_val              - validation input (optional)
             y_val              - validation output (optional)
             u_pre_val          - transient input before validation phase (if None, last reservoir state of testing phase used for init. validation state)
-
+            recompute_Win      - whether input matrix must be initialized
+            recompute_Wres     - whether reservoir matrix must be initialized
+            recompute_Wfb      - whether feedback matrix must be initialized
+            
         RETURN:
             mse_train   - mean square error of (teacher forced!) reservoir output (to training target data set y_train) in the training phase. Mean w.r.t. timestep-axis. 
             mse_test    - mean square error of reservoir output (to testing data set y_test). Mean w.r.t. timestep-axis
@@ -329,27 +437,33 @@ def RunturbESN(esn, u_train: Union[np.ndarray, torch.Tensor]=None,
             y_pred_val  - reseroir outputs of validation phase
             
     '''
-
+   
     torch.manual_seed(esn.randomSeed)  
     logging.basicConfig(format=_LOGGING_FORMAT, level= esn.logging_level)
 
-    check_user_input(esn,u_train,y_train,y_test,pred_init_input,u_test,u_val,y_val)
+    check_user_input(esn,u_train,y_train,y_test,test_init_input,u_test,u_val,y_val)
     
     ##############################################
-    # ESN
+    # Run ESN
     ##############################################
     
     #----------------------------------------------------------
     #1. Create Random Matrices
     #----------------------------------------------------------
-    esn.createWeightMatrices()
+    if recompute_Win:
+        esn.createInputMatrix()
+    if recompute_Wres:
+        esn.createReservoirMatrix()
+    if esn.use_feedback and recompute_Wfb:
+        esn.createFeedbackMatrix()
 
     #----------------------------------------------------------
     #2. Training Phase
     #----------------------------------------------------------
-    esn.x_fit = esn.propagate(u = esn.u_train, transientTime = esn.transientTime,y=esn.y_train)
-    esn.fit(X  = esn.x_fit, y = esn.y_train[esn.transientTime:])
-    mse_train = ComputeMSE(y_test = esn.y_train[esn.transientTime:], y_pred =  (esn.Wout@esn.x_fit).T)
+    esn.x_train = esn.propagate(u = esn.u_train, transientTime = esn.transientTime,y=esn.y_train)
+    esn.fit(X  = esn.x_train, y = esn.y_train[esn.transientTime:])
+    mse_train = ComputeMSE(y_test = esn.y_train[esn.transientTime:], y_pred =  (esn.Wout@esn.x_train).T)
+    
 
     if np.isnan(esn.Wout).any() or mse_train is None:
         logging.error("Reservoir {0}: while fitting the model, an error occured. Assuming default values.".format(esn.id))
@@ -364,48 +478,54 @@ def RunturbESN(esn, u_train: Union[np.ndarray, torch.Tensor]=None,
     #----------------------------------------------------------
     #3. Prediction/Testing Phase (Default:'auto')
     #----------------------------------------------------------
-    if esn.mode == _ESN_MODES[1]:
-        y_pred_test, esn.x_pred = esn.teacherforce(X = esn.x_fit, testingLength = esn.testingLength)
+    if esn.mode == _ESN_MODES[0]:
+        y_pred_test, esn.x_test = esn.predict(X = esn.x_train, testingLength = esn.testingLength)
+
+    elif esn.mode == _ESN_MODES[1]:
+        y_pred_test, esn.x_test = esn.teacherforce(X = esn.x_train, testingLength = esn.testingLength)
   
     elif esn.mode == _ESN_MODES[2]:
         #TO DO: for now semi-teacher is only possible for n_input = n_output
         assert len(index_list_auto) + len(index_list_teacher) == esn.n_input,'index_list_auto and index_list_teacher do not add up to n_input.'
-        y_pred_test, esn.x_pred = esn.semiteacherforce(X = esn.x_fit, testingLength = esn.testingLength, 
+        y_pred_test, esn.x_test = esn.semiteacherforce(X = esn.x_train, testingLength = esn.testingLength, 
                                                   index_list_auto = index_list_auto, index_list_teacher = index_list_teacher, 
                                                   u_test = esn.u_test)
-  
     else:
-        y_pred_test, esn.x_pred = esn.predict(X = esn.x_fit, testingLength = esn.testingLength)
-
-    mse_test = ComputeMSE(y_test = esn.y_test,y_pred = y_pred_test)
+        raise NotImplementedError('Error: unkown mode {0}. Choices {1}'.format(mode, _ESN_MODES))                                
+ 
+    
+    mse_test = ComputeMSE(y_test=esn.y_test, y_pred=y_pred_test)
     
     #-------------------------------------------------------------------------
     #4. (optional) Validation Phase (for now only in auto & teacherforce mode)
     #-------------------------------------------------------------------------
     mse_val = None
     y_pred_val = None
-
     
     if None not in [esn.u_val, esn.y_val]:
-
+        
         validationLength = esn.y_val.shape[0]
         if u_pre_val is not None:
             X_pre_val = esn.propagate(u = u_pre_val, transientTime = u_pre_val.shape[0]-1)
             #esn.val_init_input = u_pre_val[-1,:].reshape(1,esn.n_input)   #this is already set in check_user_input
         else:
             # validation phase directly preceeded by testing phase
-            X_pre_val = esn.x_pred
-            if esn.mode == _ESN_MODES[0]:
-                esn.val_init_input = esn.y_test[-1,:].reshape(1,esn.n_input)
+            X_pre_val = esn.x_test
+            if esn.val_init_input is None:
+                if esn.mode == _ESN_MODES[0]:
+                    esn.val_init_input = esn.y_test[-1,:].reshape(1,esn.n_input)
 
         if esn.mode == _ESN_MODES[0]:
-            y_pred_val, esn.x_val = esn.predict(X=X_pre_val, testingLength=validationLength,init_input=esn.val_init_input)
-        if esn.mode == _ESN_MODES[1]:
-            y_pred_val, esn.x_val = esn.teacherforce(X = esn.x_fit, testingLength = esn.validationLength,u=esn.u_val)
+            y_pred_val, esn.x_val = esn.predict(X=X_pre_val,testingLength=validationLength,init_input=esn.val_init_input)
 
-        mse_val = ComputeMSE(y_test = esn.y_val,y_pred = y_pred_val)
+        elif esn.mode == _ESN_MODES[1]:
+            y_pred_val, esn.x_val = esn.teacherforce(X = esn.x_train, testingLength = esn.validationLength, u=esn.u_val)
+        else:
+            raise NotImplementedError('Error: mode {0} not supported for validation. Choices {1}'.format(mode, _ESN_MODES[:2]))
+
+        mse_val = ComputeMSE(y_test=esn.y_val, y_pred=y_pred_val)
         
-
+    
     return mse_train, mse_test, mse_val, y_pred_test, y_pred_val
 
 #--------------------------------------------------------------------------
@@ -595,7 +715,7 @@ def compute_normalized_prediction_error(y_test:torch.Tensor,
 
 ###########################################################################################################
 
-def CreateHDF5Groups(filepath: str, esn_ids: list, nstudy: int):
+def create_hdf5_groups(filepath: str, esn_ids: list, nstudy: int):
     '''Initializes the ESN study hdf5 file structure (shown below).  
 
     INPUT:
@@ -685,7 +805,7 @@ def SaveStudy(filepath: str,
     logging.info('Saving study to {0}'.format(filepath))
 
     if f is None:
-        assert os.path.isfile(filepath), "Error: The file {0} does not exist. Did you initialize the file with util.CreateHDF5Groups ?".format(filepath)
+        assert os.path.isfile(filepath), "Error: The file {0} does not exist. Did you initialize the file with util.create_hdf5_groups ?".format(filepath)
         f = h5py.File(filepath, 'a')
         toClose = True
 
@@ -734,27 +854,28 @@ def SaveStudy(filepath: str,
 #--------------------------------------------------------------------------
 # FH added 28.02.2021
 #--------------------------------------------------------------------------
-def CreateStudyConfigArray(study_parameters: Union[list,tuple], study_dicts: dict) -> np.ndarray:
+def CreateStudyConfigArray(study_tuple: Union[list,tuple], study_dicts: dict) -> np.ndarray:
     ''' Computes an array, which gives the parameter configuration/setting for the corresponding study.
         
         INPUT: 
-            study_parameters - list/tuple of strings specifying which parameters were studied. E.g. when reservoir size and density are studied  study_parameters = ['n_reservoir', 'reservoirDensity']
+            study_tuple      - list/tuple of strings specifying which parameters were studied. 
+                               E.g. when reservoir size and density are studied  study_tuple = ('n_reservoir', 'reservoirDensity')
             study_dicts      - dictionary specifying the study parameter configuration
 
         RETURN:
             - config - list indicating the parameter setting for given study
         '''
 
-    nparam = len(study_parameters)      #no. different parameters that are studied
-    nstudy = len(study_dicts)           #no. studies/ parameter settings that were conducted
-    config = []   #np.empty([nstudy,nparam]) # FH 22.08.22: if HP is an array, config should be list
+    nparam = len(study_tuple)      #no. different parameters that are studied
+    nstudy = len(study_dicts)      #no. studies/ parameter settings that were conducted
+    config = []   #np.empty([nstudy,nparam]) # FH 22.08.22: if HP is an array, config must be list
 
     for ii in range(nstudy):
         config_dict  =study_dicts[ii]
 
         config_param = []
         for pp in range(nparam):
-            key = study_parameters[pp]
+            key = study_tuple[pp]
             config_param.append(config_dict[key])
             
         config.append(config_param)
@@ -763,17 +884,15 @@ def CreateStudyConfigArray(study_parameters: Union[list,tuple], study_dicts: dic
 
 #--------------------------------------------------------------------------
 def ReadStudy(filepath: str, 
-              study_parameters: Union[list,tuple], 
-              nstudy: int = None, 
+              study_tuple: Union[list,tuple],
               read_pred: bool = False, 
               esn_ids: list = None, 
-              esn_id: int = None) -> Tuple[np.ndarray,np.ndarray,np.ndarray, np.ndarray]:
+              esn_id: int = None) -> Tuple[np.ndarray,np.ndarray,np.ndarray, np.ndarray, np.ndarray,list]:
     '''Imports the results of the ESN study. 
         
         INPUT:
             filepath         - path to which the hdf5 file of the ESN study was saved to
-            study_parameters - list/tuple of strings specifying which parameters were studied. E.g. when reservoir size and density are studied: study_parameters = ['n_reservoir', 'reservoirDensity']
-            nstudy           - number of different reservoir setting that were studied. If nstudy = None, the number is deduced from the file.
+            study_tuple      - list/tuple of strings specifying which parameters were studied. E.g. when reservoir size and density are studied: study_tuple = ['n_reservoir', 'reservoirDensity']
             read_pred        - boolean specifying whether to import ESN predictions y
             esn_ids          - list of ESN IDs (usually these corresponds to different RNG seeds. For example esn_ids = range(nseeds) for nseeds RNG seeds.)
             esn_id           - ESN ID (usually corresponds to a RNG seed)
@@ -793,133 +912,300 @@ def ReadStudy(filepath: str,
     if read_pred:
         logging.debug("Reading reservoir outputs.")
 
-    #read specified seed
-    if esn_id is not None:  
-        with h5py.File(filepath,'r') as f:
+    if esn_ids is None:
+        esn_ids = [esn_id,]
 
-            mse_train, mse_test, mse_val, y_pred_test, y_pred_val, study_dicts = [], [], [], [], [], []
+    mse_train, mse_test, mse_val, y_pred_test, y_pred_val, study_dicts = [], [], [], [], [], []
+
+    with h5py.File(filepath,'r') as f:
+
+        for ii,esn_id in enumerate(esn_ids):
             G_esn_id = f.get(str(esn_id))
-            
-            #if user does not specify study number, the number is inferred from no. subgroups
-            if nstudy is None:
-                nstudy = len(G_esn_id.keys())
-            
+            nstudy = len(G_esn_id.keys())
+        
+            MSE_train, MSE_test, MSE_val, Y_pred_test, Y_pred_val = [], [], [], [], []
             for istudy in range(nstudy):
-                study_dict = {}
                 G_study = G_esn_id.get(str(istudy))
 
-                mse_train.append(np.array(G_study.get('mse_train')))
-                mse_test.append(np.array(G_study.get('mse_test')))
-                mse_val.append(np.array(G_study.get('mse_val')))
-                
+                if ii == 0:
+                    study_dict = {}
+                    for name in study_tuple:
+                        study_dict[name] = G_study.attrs[name]
+                    study_dicts.append(study_dict)
+        
+                MSE_train.append(np.array(G_study.get('mse_train')))
+                MSE_test.append(np.array(G_study.get('mse_test')))
+                MSE_val.append(np.array(G_study.get('mse_val')))
+
 
                 if read_pred:
-                    y_pred_test.append(np.array(G_study.get('y_pred_test')))
-                    y_pred_val.append(np.array(G_study.get('y_pred_val')))
+                    Y_pred_test.append(np.array(G_study.get('y_pred_test')))
+                    Y_pred_val.append(np.array(G_study.get('y_pred_val')))
                     
 
-                for name in study_parameters:
-                    study_dict[name] = G_study.attrs[name]
-                    
-                study_dicts.append(study_dict)
+            mse_train.append(np.array(MSE_train))
+            mse_test.append(np.array(MSE_test))
+            mse_val.append(np.array(MSE_val))
             
-        config = CreateStudyConfigArray(study_parameters, study_dicts)
+            y_pred_test.append(np.array(Y_pred_test))
+            y_pred_val.append(np.array(Y_pred_val))
+                
+        config = CreateStudyConfigArray(study_tuple, study_dicts)
+
         return np.array(mse_train), np.array(mse_test), np.array(mse_val), np.array(y_pred_test), np.array(y_pred_val), config
 
-    #read all specified seeds
-    else:
-        with h5py.File(filepath,'r') as f:
+#--------------------------------------------------------------------------
+def ReadMSE(filepath: str, 
+              study_tuple: Union[list,tuple], 
+              esn_ids: list = None, 
+              esn_id: int = None) -> Tuple[np.ndarray,np.ndarray,np.ndarray, list]:
+    '''Imports the MSEs of the ESN study. 
+        
+        INPUT:
+            filepath         - path to which the hdf5 file of the ESN study was saved to
+            study_tuple      - list/tuple of strings specifying which parameters were studied. E.g. when reservoir size and density are studied: study_tuple = ['n_reservoir', 'reservoirDensity']
+            esn_ids          - list of ESN IDs (usually these corresponds to different RNG seeds. For example esn_ids = range(nseeds) for nseeds RNG seeds.)
+            esn_id           - ESN ID (usually corresponds to a RNG seed)
             
-            mse_train, mse_test, mse_val, y_pred_test, y_pred_val, study_dicts = [], [], [], [], [], []
+        RETURN:
+            mse_train   - mean square training error of reservoir output (to validation data set y_train). Mean w.r.t. timestep-axis. 
+            mse_test    - mean square error of reservoir output (to testing data set y_test). Mean w.r.t. timestep-axis. 
+            mse_val     - mean square error of reservoir output (to validation data set y_test). Mean w.r.t. timestep-axis.          
+            config      - array indicating the parameter setting for given study
+    '''
 
-            for ii,esn_id in enumerate(esn_ids):
-                G_esn_id = f.get(str(esn_id))
+    assert esn_id is not None or esn_ids is not None, "esn_id and esn_ids cant both be None."
+    assert os.path.isfile(filepath),"Error: File {0} not found.".format(filepath)
+
+    if esn_ids is None:
+        esn_ids = [esn_id,]
+
+    mse_train, mse_test, mse_val, study_dicts = [], [], [], []
+    with h5py.File(filepath,'r') as f:
+
+        for ii,esn_id in enumerate(esn_ids):
+            G_esn_id = f.get(str(esn_id))
+            nstudy = len(G_esn_id.keys())
+        
+            MSE_train, MSE_test, MSE_val  = [], [], []
+            for istudy in range(nstudy):
+                G_study = G_esn_id.get(str(istudy))
+
+                if ii == 0:
+                    study_dict = {}
+                    for name in study_tuple:
+                        study_dict[name] = G_study.attrs[name]
+                    study_dicts.append(study_dict)
+        
+                MSE_train.append(np.array(G_study.get('mse_train')))
+                MSE_test.append(np.array(G_study.get('mse_test')))
+                MSE_val.append(np.array(G_study.get('mse_val')))
+
+            mse_train.append(np.array(MSE_train))
+            mse_test.append(np.array(MSE_test))
+            mse_val.append(np.array(MSE_val))
+                       
+    config = CreateStudyConfigArray(study_tuple, study_dicts)
+    return np.array(mse_train), np.array(mse_test), np.array(mse_val), config
+
+#--------------------------------------------------------------------------
+def ReadESNOutput(filepath: str, 
+                  study_tuple: Union[list,tuple], 
+                  esn_ids: list = None, 
+                  esn_id: int = None) -> Tuple[np.ndarray,np.ndarray, list]:
+    '''Imports the outputs of the ESN study. 
+        
+        INPUT:
+            filepath         - path to which the hdf5 file of the ESN study was saved to
+            study_tuple      - list/tuple of strings specifying which parameters were studied. E.g. when reservoir size and density are studied: study_tuple = ['n_reservoir', 'reservoirDensity']
+            esn_ids          - list of ESN IDs (usually these corresponds to different RNG seeds. For example esn_ids = range(nseeds) for nseeds RNG seeds.)
+            esn_id           - ESN ID (usually corresponds to a RNG seed)
             
-                #if user does not specify study number, the number is inferred from no. subgroups
-                if nstudy is None:
-                    nstudy = len(G_esn_id.keys())
-            
-                MSE_train, MSE_test, MSE_val, Y_pred_test, Y_pred_val = [], [], [], [], []
-                for istudy in range(nstudy):
-                    G_study = G_esn_id.get(str(istudy))
+        RETURN:
+            y_pred_test - reseroir outputs of testing phase, for each study parameter setting of the study 
+            y_pred_val  - reseroir outputs of validation phase, for each study parameter setting of the study          
+            config      - array indicating the parameter setting for given study
+    '''
 
-                    if ii == 0:
-                        study_dict = {}
-                        for name in study_parameters:
-                            study_dict[name] = G_study.attrs[name]
-                        study_dicts.append(study_dict)
-            
-                    MSE_train.append(np.array(G_study.get('mse_train')))
-                    MSE_test.append(np.array(G_study.get('mse_test')))
-                    MSE_val.append(np.array(G_study.get('mse_val')))
+    assert esn_id is not None or esn_ids is not None, "esn_id and esn_ids cant both be None."
+    assert os.path.isfile(filepath),"Error: File {0} not found.".format(filepath)
 
+    if esn_ids is None:
+        esn_ids = [esn_id,]
 
-                    if read_pred:
-                        Y_pred_test.append(np.array(G_study.get('y_pred_test')))
-                        Y_pred_val.append(np.array(G_study.get('y_pred_val')))
-                        
+    y_pred_test, y_pred_val, study_dicts = [], [], []
+    with h5py.File(filepath,'r') as f:
 
-                mse_train.append(np.array(MSE_train))
-                mse_test.append(np.array(MSE_test))
-                mse_val.append(np.array(MSE_val))
-                
-                y_pred_test.append(np.array(Y_pred_test))
-                y_pred_val.append(np.array(Y_pred_val))
-                
-                    
-        config = CreateStudyConfigArray(study_parameters, study_dicts)
-        return np.array(mse_train), np.array(mse_test), np.array(mse_val), np.array(y_pred_test), np.array(y_pred_val), config
+        for ii,esn_id in enumerate(esn_ids):
+            G_esn_id = f.get(str(esn_id))
+            nstudy = len(G_esn_id.keys())
+        
+            Y_pred_test, Y_pred_val  = [], []
 
+            for istudy in range(nstudy):
+                G_study = G_esn_id.get(str(istudy))
 
+                if ii == 0:
+                    study_dict = {}
+                    for name in study_tuple:
+                        study_dict[name] = G_study.attrs[name]
+                    study_dicts.append(study_dict)
+        
+                Y_pred_test.append(np.array(G_study.get('y_pred_test')))
+                Y_pred_val.append(np.array(G_study.get('y_pred_val')))
+
+            y_pred_test.append(np.array(Y_pred_test))
+            y_pred_val.append(np.array(Y_pred_val))
+
+    config = CreateStudyConfigArray(study_tuple, study_dicts)
+
+    return np.array(y_pred_test), np.array(y_pred_val), config
+    
 ###########################################################################################################
 
 #                            EXPERIMENTAL
 
 ###########################################################################################################
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-def InitRandomSearchStudyOrder(nstudy: int, 
-                              study_tuple: tuple, 
-                              HP_range_dict: dict = {}, 
-                              use_log_scale: bool=False) -> list:
-    ''' Initializes the HP study parameter settings for a random search. 
-        Each of the nstudy settings is given by an entry of the returned list config.
+clrs = sns.color_palette()
 
+def plot_activation_arg_distribution(esn,
+                                    style_dict,
+                                    bins_input: Union[int,torch.Tensor] = 40, 
+                                    bins_res: Union[int,torch.Tensor] = 40, 
+                                    bins_fb: Union[int,torch.Tensor] = 40,):
+
+    """
+    Plots activation argument distribution from compute_activation_arg_distribution method in core.py
     INPUT:
-        nstudy           - number of different reservoir setting that should be studied. 
-        study_tuple      - tuple specifying the parameters that are studied
-        HP_range_dict    - dictionary containing the interval of each hyperparameter (HP must be specified in study_set) 
-        use_log_scale    - whether to use loguniform dist. or uniform (nothe that regressionParameter always uses log scale)
-    RETURN: 
-        config - array indicating the parameter setting for given study
-    '''
+        esn         - ESN object
+        style_dict  - dict specifying plot parameters
+        bins_input  - bins to use for computing the distribution of Win@u (inputs)
+        bins_res    - bins to use for computing the distribution of Wres@x (reservoir states)
+        bins_fb     - bins to use for computing the distribution of Wfb@y (feedbacks)
+        
+    RETURN:
+        fig - figure 
+        axs - axes
+    """
+    # Read Style
+    #-----------------
+    base_size1,base_size2 = style_dict["base_size1"], style_dict["base_size2"]
+    fs_label,fs_tick = style_dict["fs_label"],style_dict["fs_tick"]
+    lw = style_dict["lw"]
+
+    act = lambda x: np.tanh(x)
+    phase = ['total', 'input', 'reservoir', 'feedback']
+    xlabels = [r'$W^{\rm in}u+W^{\rm r}x+W^{\rm fb}y$', r'$W^{\rm in}u$', r'$W^{\rm r}x$', r'$W^{\rm fb}y$']
+    xlabels_tanh = [r'$\tanh($'+label+r')' for label in xlabels]
+
+    # Plot
+    #-----------------
+    fig,axs = plt.subplots(figsize=(base_size1*4,base_size2),ncols=4,sharey=True,nrows=2)
+
+    hists_train, bins_train = esn.compute_activation_arg_distribution(40,40,40,phase='train')
+    for ii,(h,b) in enumerate(zip(hists_train,bins_train)):
+        axs[0,ii].plot(b[:-1],h,label="training phase",linewidth=lw)
+        axs[1,ii].plot(act(b[:-1]),h,label="training phase",linewidth=lw)
+        
+    hists_test, bins_test = esn.compute_activation_arg_distribution(40,40,40,phase='test')
+    for ii,(h,b) in enumerate(zip(hists_test,bins_test)):
+        axs[0,ii].plot(b[:-1],h,linestyle='dashed',label="testing phase",linewidth=lw)
+        axs[1,ii].plot(act(b[:-1]),h,linestyle='dashed',label="testing phase",linewidth=lw)
 
 
-    if not HP_range_dict:
-        HP_range_dict = ESN.hyperparameter_intervals()
+    for iiax in axs:
+        for iax in iiax:
+            iax.tick_params(labelsize=fs_tick)
+    for ii,iax in enumerate(axs[0]):
+        iax.set_title(phase[ii],fontsize=fs_label)
+        iax.set_xlim([-3,3])
+        iax.set_xlabel(xlabels[ii],fontsize=fs_label)
+    for ii,iax in enumerate(axs[1]):
+        iax.set_xlim([-1.5,1.5])
+        iax.set_xlabel(xlabels_tanh[ii],fontsize=fs_label)
+        
+        
+    twin_x = axs[1,0].twinx()
+    xx = np.linspace(-3,3,100)
+    twin_x.plot(act(xx),xx,color="black",label=r"$\tanh(x)$")
+    twin_x.set_yticks([])
+    twin_x.legend(fontsize=fs_label)
+    axs[0,0].legend(loc="lower left",bbox_to_anchor=(0,.68),fontsize=fs_label)
+    plt.subplots_adjust(wspace=0.15,hspace=0.3)
 
-    config = []
+    return fig, axs
 
-    for ii in range(nstudy):
-        setting = []
-        iparam = 0
-        for param in study_tuple:
-            if param == 'regressionParameter':
-                setting.append(loguniform.rvs(HP_range_dict[param][0],HP_range_dict[param][1],size = 1)[0])
-            elif param == 'n_reservoir':
-                if use_log_scale:
-                    setting.append(int(loguniform.rvs(HP_range_dict[param][0],HP_range_dict[param][1],size = 1)[0]))
-                else:
-                    setting.append(int(uniform.rvs(HP_range_dict[param][0],HP_range_dict[param][1],size = 1)[0]))
-            else:
-                if use_log_scale:
-                    setting.append(loguniform.rvs(HP_range_dict[param][0],HP_range_dict[param][1],size = 1)[0])
-                else:
-                    setting.append(uniform.rvs(HP_range_dict[param][0],HP_range_dict[param][1],size = 1)[0])
-                
-            
-            iparam +=1
-        config.append(setting)
+#--------------------------------------------------------------------------
+def plot_esn_predictions(esn,y_pred,style_dict,modes=None,phase='test'):
+    """
+    Plots ESN prediction from specified phase. 
+    INPUT:
+        esn        - ESN object
+        y_pred     - ESN prediction  
+        style_dict - dict specifying plot parameters
+        modes      - list specifying which modes of y_pred will be plotted
+        phase      - str indicating for which phase the distributions should be computed: 'train', 'test', 'validation'
     
-    return config
+    RETURN:
+        fig - figure 
+        axs - axes
+    """
+    
+    # Read Style 
+    #-----------------
+    base_size1,base_size2 = style_dict["base_size1"], style_dict["base_size2"]
+    fs_label,fs_tick = style_dict["fs_label"],style_dict["fs_tick"]
+    lw = style_dict["lw"]
+    ylim = style_dict["ylim"]
+ 
+    if modes == None:
+        modes = range(esn.n_output)
+        
+    try:
+        ylabels = style_dict["ylabels"]
+    except KeyError:
+        ylabels = [r'$a_{'+f'{ii+1}'+ r'}$'for ii in modes]
+    
+    
+    if phase == 'train':
+        y_gt = esn.y_train[self.transientTime:]
+    elif phase == 'test':
+        y_gt = esn.y_test
+    elif phase == 'validation':
+        y_gt = esn.y_val
+    
+    nt = y_gt.shape[0]
+        
+    # Plot
+    #-----------------
+    fig,axs = plt.subplots(figsize = (base_size1,base_size2*len(modes)), nrows = len(modes), sharex = True)
+
+    for ii,imode in enumerate(modes):
+        axs[ii].plot(range(nt),
+                     y_gt[:,imode], 
+                     label = 'GT',
+                     color = clrs[0],
+                     linewidth = lw)
+        axs[ii].plot(range(nt),
+                     y_pred[:,imode], 
+                     label = 'ESN',linestyle="dashed",
+                     color = clrs[1],
+                     linewidth = lw)
+
+
+        axs[ii].set_ylabel(ylabels[ii], fontsize = fs_label, rotation = 0, labelpad = 17)
+        axs[ii].set_ylim(ylim)
+
+    # tidy up
+    for iax in axs:
+        iax.tick_params(axis="x", labelsize = fs_tick)
+        iax.tick_params(axis="y", labelsize = fs_tick)
+
+    axs[-1].set_xlabel('time step',fontsize = fs_label);
+
+    return fig,axs
 
 #--------------------------------------------------------------------------

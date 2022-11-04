@@ -1,17 +1,22 @@
 import torch
 import numpy as np
 import sys
+import os
 import h5py 
+import json
 from typing import Union, Tuple, List
 import logging
 
+#turbESN
+from ._modes import (_DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT, _FIT_METHODS)
 
-_DTYPE = torch.float32
-_DEVICE = torch.device('cpu')                      
-_ESN_MODES = ('auto', 'teacher', 'semi-teacher')   # prediction modes 
-_WEIGTH_GENERATION = ('uniform', 'normal')         # random weight generation
-_EXTENDED_STATE_STYLES = ('default', 'square')    # layout of extended state 
-_LOGGING_FORMAT = '%(asctime)s %(threadName)s %(levelname)s: %(message)s'
+
+# Read hyperparameter.json
+import importlib.resources as pkg_resources
+with pkg_resources.path(__package__,'hyperparameters.json') as hp_dict_path:
+    with open(hp_dict_path,'r') as f:
+        HP_dict = json.load(f)  
+
 
 class ESN:
 
@@ -45,6 +50,7 @@ class ESN:
                 transientTime: int = 50,
                 use_feedback: bool = False,
                 feedbackScaling: float = 1,
+                fit_method: str = "tikhonov",
                 verbose: bool = False):
 
 
@@ -74,15 +80,14 @@ class ESN:
         self.trainingLength = trainingLength                         #no. time steps for the training data set
         self.testingLength = testingLength                           #no. time stes for the testing data set
         self.validationLength = validationLength                     #no. time stes for the validation data set
-        self.data_timesteps = data_timesteps                         #no. time steps the orignal data has/should have
+        self.data_timesteps = data_timesteps                         #no. time steps the orignal data has
         self.esn_timesteps = trainingLength + testingLength          #no. total resulting time steps for the esn 
         self.n_input = int(n_input)                                  #input data dimensions
         self.n_output = int(n_output)                                #output data dimensions
         self.n_reservoir = int(n_reservoir)                          #dimensions of reservoir state and W with shape (n_reservoir, n_reservoir)
         
-        
         if self.extendedStateStyle == _EXTENDED_STATE_STYLES[0]:
-            self.xrows = int(1+n_reservoir+n_input)                  #dim of extended reservoir state: (xrows,timesteps). xrows = bias + n_reservoir + n_reservoir
+            self.xrows = int(1+n_reservoir+n_input)                  #dim of extended reservoir state: (xrows,timesteps). xrows = bias + n_reservoir + n_input
         else:
             self.xrows = int(1+2*n_reservoir)                        #dim of extended reservoir state: (xrows,timesteps). xrows = bias + n_reservoir + n_reservoir
 
@@ -92,8 +97,8 @@ class ESN:
             leakingRate = leakingRate.to(_DTYPE).reshape(self.n_reservoir,1)
 
         self.leakingRate = leakingRate                               #factor controlling the leaky integrator formulation (1 -> fully nonlinear, 0 -> fully linear)
-        self.spectralRadius = spectralRadius                         #maximum absolute eigenvalue of W
-        self.reservoirDensity = reservoirDensity                     #fraction of non-zero elements of W
+        self.spectralRadius = spectralRadius                         #maximum absolute eigenvalue of Wres
+        self.reservoirDensity = reservoirDensity                     #fraction of non-zero elements of Wres
         self.regressionParameter = regressionParameter               #ridge regression/ penalty parameter of ridge regression
         self.bias_in = bias_in                                       #input bias in the input mapping: Win*[1;u]
         self.bias_out = bias_out                                     #output bias in the final output mapping:  y = Wout*[outputbias; outputInputScaling*u; s]
@@ -103,12 +108,16 @@ class ESN:
         self.noiseLevel_in = noiseLevel_in                           #amplitude of the gaussian noise term inside the activation function
         self.noiseLevel_out = noiseLevel_out                         #amplitude of the gaussian noise term outside the activation function
 
-        assert weightGeneration in _WEIGTH_GENERATION,'Error: unkown weightGeneration {0}. Choices {1}'.format(weightGeneration, _WEIGTH_GENERATION)
-        self.weightGeneration = weightGeneration                     #method the random weights Win, W should be initialized.
+        assert weightGeneration in _WEIGTH_GENERATION,'Error: unknown weightGeneration {0}. Choices {1}'.format(weightGeneration, _WEIGTH_GENERATION)
+        self.weightGeneration = weightGeneration                     #method the random weights Win, W should be initialized
         self.transientTime = transientTime                           #washout length for reservoir states
         self.use_feedback = use_feedback                             #if True, the reservoir uses feedback weights
         self.feedbackScaling = feedbackScaling                       #scaling of the columns of the feedback matrix Wfb
 
+        assert fit_method in _FIT_METHODS, "Error: unknown fit_method {0}. Choices {1}".format(fit_method, _FIT_METHODS)
+        self.fit_method =  fit_method
+
+        # Init to None
         self.y_train = None           
         self.u_train = None
         self.y_test  = None
@@ -116,9 +125,17 @@ class ESN:
         self.y_val  = None
         self.u_val  = None
         
-        self.pred_init_input = None
+        self.test_init_input = None
         self.val_init_input = None
 
+        self.x_train = None
+        self.x_test = None
+        self.x_val = None
+
+        self.Win = None
+        self.Wout = None
+        self.Wfb = None
+        self.Wres = None
 
 #--------------------------------------------------------------------------     
 #--------------------------------------------------------------------------
@@ -173,7 +190,7 @@ class ESN:
 
         if self.weightGeneration == 'normal':
             self.Wres = torch.as_tensor(torch.randn(self.n_reservoir, self.n_reservoir, dtype = _DTYPE, device = self.device) , dtype = _DTYPE, device = self.device)
-        else:    #uniform
+        else:
             self.Wres = torch.as_tensor(torch.rand(self.n_reservoir, self.n_reservoir, dtype = _DTYPE, device = self.device) - 0.5, dtype = _DTYPE, device = self.device)
  
         #prevent all-zero eigenvals 
@@ -327,15 +344,17 @@ class ESN:
                 
                 if self.extendedStateStyle == _EXTENDED_STATE_STYLES[0]:
                     X[:, t - transientTime] = torch.vstack(
-                        (torch.tensor(self.bias_out, device = self.device, dtype = _DTYPE), self.outputInputScaling * u[t].reshape(self.n_input,1), x)
-                    )[:, 0]
+                        (torch.tensor(self.bias_out, device = self.device, dtype = _DTYPE), 
+                         self.outputInputScaling * u[t].reshape(self.n_input,1),
+                          x))[:, 0]
                 else:
                     X[:, t - transientTime] = torch.vstack(
-                        (torch.tensor(self.bias_out, device = self.device, dtype = _DTYPE), x, x**2)
-                    )[:, 0]
+                        (torch.tensor(self.bias_out, device = self.device, dtype = _DTYPE), 
+                         x,
+                         x**2))[:, 0]
         return X
 #--------------------------------------------------------------------------
-    def verifyReservoirConvergence(self, 
+    def verify_echo_state_property(self, 
                                    u: torch.Tensor=None, 
                                    proximity_distance: float = 1e-3, 
                                    proximity_time: int = 20,
@@ -345,6 +364,7 @@ class ESN:
                 u                  - training input data (with which the reservoir is beeing forced)
                 proximity_distance - proximity distance of the two initially independent states
                 proximity_time     - no. time steps two initially independent states must be closer than proximity_distance
+                y                  - training output (only used when feedback is used)
 
             RETURN:
                 transientTime - no. time steps needed for two states -1 and 1, given the current reservoir and input u, to converge to a 'similar state'.
@@ -381,9 +401,14 @@ class ESN:
 
             #update reservoir states
             for ii in range(x_init.shape[0]):
-                self.update(u[it], x_init[ii], y=y[it])
-                
-        logging.error('Reservoir states did not converge.')
+                if self.use_feedback:
+                    self.update(u[it], x_init[ii], y=y[it])
+                else:
+                    self.update(u[it], x_init[ii])
+                    
+        
+        logging.warn('Reservoir states did not converge.')
+        return torch.inf
 #--------------------------------------------------------------------------
     def fit(self, X: torch.Tensor, y: torch.Tensor):
         '''
@@ -397,11 +422,14 @@ class ESN:
         logging.debug('Fitting output matrix')
         assert X.shape[1] == y.shape[0], "Time dimension of X ({0}) does not match time dimension of y ({1}).\nDid you forget to exclude the transientTime of y? ".format(X.shape[1], y.shape[0])
         
-        I = torch.eye(self.xrows, device = self.device)
-        I[0,0] = 0  #do not include bias term in regularization, see Lukosevicius et al. Cogn. Comp. (2021) p.2
-
-        self.Wout = torch.matmul(torch.matmul(y.T,X.T), torch.inverse(X@X.T + self.regressionParameter*I))
-
+        if self.fit_method == "tikhonov":
+            I = torch.eye(self.xrows, device = self.device)
+            I[0,0] = 0  #do not include bias term in regularization, see Lukosevicius et al. Cogn. Comp. (2021) p.2
+            self.Wout = torch.matmul(torch.matmul(y.T,X.T), torch.inverse(X@X.T + self.regressionParameter*I))
+        elif self.fit_method == "pinv":
+            self.Wout = torch.matmul(y.T,torch.linalg.pinv(X))
+        else:
+            raise NotImplementedError("fit_method must be one of {0}".format(_FIT_METHODS))
 #--------------------------------------------------------------------------
     def fetch_state(self, X: torch.Tensor) -> torch.Tensor:
         '''
@@ -425,7 +453,7 @@ class ESN:
         Used in mode = auto. 
 
         Autonomous prediction mode of the reservoir. Starting from the last state of the training state matrix X and specified
-        initial input init_input. If init_input not specified, rely on self.pred_init_input. The reservoir feeds its last output back to the input layer.
+        initial input init_input. If init_input not specified, rely on self.test_init_input. The reservoir feeds its last output back to the input layer.
 
         INPUT:
             X             - state matrix (from which the last state will be taken as starting point) 
@@ -434,20 +462,25 @@ class ESN:
 
         RETURN:
             y_pred - reservoir output (predictions)
-            X_pred - reservoir state matrix (prediction phase)
+            x_pred - reservoir state matrix (prediction phase)
         '''
-        
+
         logging.debug('Predicting output')
 
         if init_input is None:
-            if self.pred_init_input is None:
-                logging.error('Error in predict: Initial prediction input is not defined! Returning default values for (y_pred, X_pred).')
+            if self.test_init_input is None:
+                logging.error('Error in predict: Initial prediction input is not defined! Returning default values for (y_pred, x_pred).')
                 return torch.zeros((testingLength, self.n_output)), torch.zeros((self.xrows, testingLength))
+            else:
+                init_input = self.test_init_input
+
 
         y_pred = torch.zeros([self.n_output,testingLength], device = self.device, dtype = _DTYPE) 
-        X_pred = torch.zeros([self.xrows, testingLength], device = self.device, dtype = _DTYPE)
-        pred_input = self.pred_init_input
+        x_pred = torch.zeros([self.xrows, testingLength], device = self.device, dtype = _DTYPE)
+
+
         x = X[:,-1].reshape(self.xrows,)
+        pred_input = init_input
 
         for it in range(testingLength):
             x_in = self.fetch_state(x)
@@ -462,12 +495,11 @@ class ESN:
             pred_output = self.Wout@x                               #reservoir output at time it    
 
             y_pred[:,it] = pred_output.reshape(self.n_output,)
-            X_pred[:,it] = x.reshape(self.xrows,)
+            x_pred[:,it] = x.reshape(self.xrows,)
             
             pred_input = pred_output                             #new input is the current output
-
-
-        return y_pred.T, X_pred
+        
+        return y_pred.T, x_pred
 
 #--------------------------------------------------------------------------
     def teacherforce(self, X: torch.Tensor, testingLength: int, u: torch.Tensor=None) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -484,13 +516,13 @@ class ESN:
 
         RETURN:
             y_pred - reservoir output (predictions)
-            X_pred - reservoir state matrix (prediction phase)
+            x_pred - reservoir state matrix (prediction phase)
         '''
         
         logging.debug('Predicting output')
             
         y_pred = torch.zeros((self.n_output,testingLength), device = self.device, dtype = _DTYPE) 
-        X_pred = torch.zeros((self.xrows, testingLength), device = self.device, dtype = _DTYPE)
+        x_pred = torch.zeros((self.xrows, testingLength), device = self.device, dtype = _DTYPE)
         x = X[:,-1].reshape(self.xrows,)
 
         if u is None:
@@ -507,13 +539,13 @@ class ESN:
 
             x = self.propagate(u[it].reshape(1,self.n_input),x=x_in, y=y)      #state at time it
 
-            X_pred[:,it] = x.reshape(self.xrows,)
+            x_pred[:,it] = x.reshape(self.xrows,)
             
 
         #compute reservoir outputs
-        y_pred = self.Wout@X_pred                                                     
+        y_pred = self.Wout@x_pred                                                     
     
-        return y_pred.T, X_pred
+        return y_pred.T, x_pred
 
 #--------------------------------------------------------------------------
     def semiteacherforce(self, X: torch.Tensor, testingLength: int, index_list_auto: list, index_list_teacher: list, u_teacher: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -533,13 +565,13 @@ class ESN:
 
         RETURN:
             y_pred - reservoir output (predictions)
-            X_pred - reservoir state matrix (prediction phase)
+            x_pred - reservoir state matrix (prediction phase)
         '''
         
         logging.debug('Predicting output')
 
         y_pred = torch.zeros([self.n_output,testingLength], device = self.device, dtype = _DTYPE) 
-        X_pred = torch.zeros([self.xrows, testingLength], device = self.device, dtype = _DTYPE)
+        x_pred = torch.zeros([self.xrows, testingLength], device = self.device, dtype = _DTYPE)
         x = X[:,-1].reshape(self.xrows,)
 
 
@@ -557,7 +589,7 @@ class ESN:
 
             return u
 
-        pred_input = self.pred_init_input
+        pred_input = self.test_init_input
 
         for it in range(testingLength):
 
@@ -570,12 +602,12 @@ class ESN:
 
             pred_output = self.Wout@x  
             y_pred[:,it] = pred_output.reshape(self.n_output,)
-            X_pred[:,it] = x.reshape(self.xrows,)
+            x_pred[:,it] = x.reshape(self.xrows,)
 
             pred_input = pred_output
 
 
-        return y_pred.T, X_pred
+        return y_pred.T, x_pred
 
 
 #--------------------------------------------------------------------------     
@@ -596,7 +628,7 @@ class ESN:
         self.y_train = y_train
     
     #--------------------------------------------------------------------------
-    def SetTestingData(self, y_test: torch.Tensor, pred_init_input: torch.Tensor = None, u_test: torch.Tensor = None):       
+    def SetTestingData(self, y_test: torch.Tensor, test_init_input: torch.Tensor = None, u_test: torch.Tensor = None):       
         
         assert y_test.shape[1] == self.n_output,'Testing output dimension ({0}) does not match ESN n_output ({1}).\n'.format(y_test.shape[1], self.n_output)
     
@@ -606,25 +638,25 @@ class ESN:
         if self.mode == 'auto':
 
             if self.y_train is None:
-                assert pred_init_input is not None, 'Initial testing input and self.y_train not specified.\n'
+                assert test_init_input is not None, 'Initial testing input and self.y_train not specified.\n'
 
-            if self.y_train is not None and pred_init_input is None:
+            if self.y_train is not None and test_init_input is None:
                 #Initial input is last training input. Then first prediction aligns with the first entry of y_test
                 logging.debug('Initial testing input not specified. Using last target training output.')
-                self.pred_init_input = self.y_train[-1:,:]    #initial input the trained ESN receives for the beginning of the testing phase
+                self.test_init_input = self.y_train[-1:,:]    #initial input the trained ESN receives for the beginning of the testing phase
            
-            elif pred_init_input is not None:
-                self.pred_init_input = pred_init_input
+            elif test_init_input is not None:
+                self.test_init_input = test_init_input
 
         elif self.mode == 'teacher':
             assert u_test is not None, 'Teacher mode requires non empty u_test!\n'
 
         if self.mode == 'semi-teacher':
 
-            if pred_init_input is not None:
-                self.pred_init_input = pred_init_input
+            if test_init_input is not None:
+                self.test_init_input = test_init_input
 
-                #TO DO: pred_init_input has len n_input. The teacher part of it is not used (see self.semiteacherforce).
+                #TO DO: test_init_input has len n_input. The teacher part of it is not used (see self.semiteacherforce).
 
     #--------------------------------------------------------------------------
     # FH 30.03.2022: Added Validation Datset (auto mode!)
@@ -919,7 +951,30 @@ class ESN:
         self.device = device
         
 #---------------------------------------------------------------------------
-    def save(self, filepath: str, f = None):
+    def get_size(self):
+        """
+        Returns estimated size of ESN object in MB.
+
+        RETURN:
+            obj_size - estimated size of all torch.Tensors, np.ndarrays in MB
+        """
+
+        obj_size = 0
+        
+        for attr_str in dir(self):
+            attr = getattr(self,attr_str)
+            
+            if isinstance(attr,torch.Tensor):
+                obj_size += (attr.nelement()*attr.element_size())/1e6
+            elif isinstance(attr,np.ndarray):
+                obj_size += attr.nbytes/1e6
+            else:
+                continue
+
+        return obj_size
+
+#---------------------------------------------------------------------------
+    def save(self,filepath: str, f = None):
         ''' Saves the reservoir parameters, training and validation/testing data from ESNParams class object into a hdf5 file
     
         INPUT:
@@ -929,63 +984,32 @@ class ESN:
         toClose = False
         logging.warn('Saving ESN parameters to Hdf5 file {0}'.format(filepath))
 
+        hdf5_attrs_save = (float,int,bool,list,str)
+        hdf5_array_save = (np.ndarray,torch.Tensor)
+
         if f is None:
             f = h5py.File(filepath, 'w')
             toClose = True
-        
+
+        # Save Hyperparameters & Data sets
         G_hp = f.create_group('Hyperparameters')
-        
-        if self.randomSeed is None:
-            self.randomSeed = False
-
-        #Model
-        G_hp.attrs['data_timesteps'] = self.data_timesteps
-        G_hp.attrs['trainingLength'] = self.trainingLength
-        G_hp.attrs['testingLength'] = self.testingLength
-        G_hp.attrs['validationLength'] = self.validationLength
-        G_hp.attrs['n_input'] = self.n_input
-        G_hp.attrs['n_output']= self.n_output
-        G_hp.attrs['n_reservoir'] = self.n_reservoir
-
-        if np.isscalar(self.leakingRate):
-            G_hp.attrs['leakingRate']= self.leakingRate
-        else:
-            G_hp.create_dataset('leakingRate',   data = self.leakingRate, compression = 'gzip', compression_opts = 9)
-
-        G_hp.attrs['spectralRadius']= self.spectralRadius
-        G_hp.attrs['regressionParameter'] = self.regressionParameter
-        G_hp.attrs['reservoirDensity'] = self.reservoirDensity
-        G_hp.attrs['noiseLevel_in'] = self.noiseLevel_in
-        G_hp.attrs['noiseLevel_out'] = self.noiseLevel_out
-        G_hp.attrs['inputScaling'] = self.inputScaling
-        G_hp.attrs['feedbackScaling'] = self.feedbackScaling               
-        G_hp.attrs['inputDensity'] = self.inputDensity
-        G_hp.attrs['weightGeneration'] = self.weightGeneration  
-        G_hp.attrs['extendedStateStyle'] = self.extendedStateStyle  
-        G_hp.attrs['use_feedback'] = self.use_feedback
-        G_hp.attrs['bias_in'] = self.bias_in
-        G_hp.attrs['bias_out'] = self.bias_out
-        G_hp.attrs['outputInputScaling'] = self.outputInputScaling
-        G_hp.attrs['esn_start'] = self.esn_start
-        G_hp.attrs['esn_end'] = self.esn_end
-        G_hp.attrs['randomSeed'] = self.randomSeed
-        G_hp.attrs['mode'] = self.mode
-        G_hp.attrs['transientTime'] = self.transientTime
-        
         G_data = f.create_group('Data')
-        #Datasets
-        if self.u_train is not None:
-            G_data.create_dataset('u_train',   data = self.u_train, compression = 'gzip', compression_opts = 9)
-        if self.y_train is not None:
-            G_data.create_dataset('y_train',   data = self.y_train, compression = 'gzip', compression_opts = 9)
-        if self.u_test is not None:
-            G_data.create_dataset('u_test',   data = self.u_test, compression = 'gzip', compression_opts = 9)
-        if self.y_test is not None:
-            G_data.create_dataset('y_test',   data = self.y_test, compression = 'gzip', compression_opts = 9)
-        if self.u_val is not None:
-            G_data.create_dataset('u_val',   data = self.u_val, compression = 'gzip', compression_opts = 9)
-        if self.y_val is not None:
-            G_data.create_dataset('y_val',   data = self.y_val, compression = 'gzip', compression_opts = 9)
+        for key in HP_dict.keys():
+            try:
+                attr = getattr(self,key)
+
+                if HP_dict[key]["SAVE_TO_HDF5"]:
+                    if isinstance(attr,hdf5_attrs_save):
+                        G_hp.attrs[key]= attr
+                    elif isinstance(attr,hdf5_array_save):
+                        if key == "leakingRate":
+                            G_hp.create_dataset(key,   data = attr, compression = 'gzip', compression_opts = 9)
+                        else:
+                            G_data.create_dataset(key, data = attr, compression = 'gzip', compression_opts = 9)
+                    else:
+                        G_hp.attrs[key]= False
+            except AttributeError:
+                pass
 
         if toClose:
             f.close()
@@ -1048,6 +1072,8 @@ class ESN:
 
         repr += "weight dist. = "+self.weightGeneration+"\n"
         repr += "use feedback weights: "+str(self.use_feedback)+"\n"
+        repr += "ESN size [MB]: {0:.1f}".format(self.get_size())+"\n"
+        
         return repr
 
 #--------------------------------------------------------------------------     
@@ -1056,273 +1082,96 @@ class ESN:
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
     @classmethod
-    def read(cls, filepath: str):
+    def read(cls, filepath:str, f = None):
         '''
-        Creates a ESNParams object from a saved hdf5 ESN file.
+        Creates an ESN object from a saved hdf5 file.
 
         INPUT:
             filepath - path to the saved ESN 
 
         RETURN:
-            esn - ESNParams object deduced from saved ESN
+            esn - ESN object
         '''
 
-        try:
-            with h5py.File(filepath,'r') as f:
-                pass
-        except:
-            logging.debug('Error: file {0} not found.'.format(filepath))
+        toClose = False
+        logging.warn('Reading ESN parameters from Hdf5 file {0}'.format(filepath))
 
+        esn = ESN.vanilla_esn()
 
-        with h5py.File(filepath,'r') as f:
+        if f is None:
+            try:
+                f = h5py.File(filepath, 'r')
+                toClose = True
+            except FileNotFoundError:
+                logging.debug('Error: file {0} not found.'.format(filepath))
+                return None
 
-            G_hp = f.get('Hyperparameters')
-            trainingLength = G_hp.attrs['trainingLength']
-            testingLength  = G_hp.attrs['testingLength']
-            validationLength  = G_hp.attrs['validationLength']
+        # Read Hyperparameters
+        G_hp = f.get('Hyperparameters')
+        for key in G_hp.attrs.keys():
+            attr = G_hp.attrs[key]
+            setattr(esn,key,attr)
         
-            data_timesteps = G_hp.attrs['data_timesteps']
-            n_input        = G_hp.attrs['n_input']
-            n_output       = G_hp.attrs['n_output']
-            n_reservoir    = G_hp.attrs['n_reservoir']
+        # leakingRate is array
+        if "leakingRate" not in G_hp.attrs.keys():
+            attr = torch.from_numpy(np.array(G_hp["leakingRate"])).to(_DTYPE)
+            setattr(esn,"leakingRate",attr)
 
-            if 'leakingRate' in G_hp.attrs.keys():
-                leakingRate = G_hp.attrs['leakingRate']
-            else:
-                leakingRate = np.array(G_hp.get("leakingRate"))
-
-            spectralRadius  = G_hp.attrs['spectralRadius']
-            regressionParameter    = G_hp.attrs['regressionParameter']
-            reservoirDensity        = G_hp.attrs['reservoirDensity']
-            noiseLevel_in              = G_hp.attrs['noiseLevel_in']
-            noiseLevel_out              = G_hp.attrs['noiseLevel_out']
-            
-            inputScaling            = G_hp.attrs['inputScaling']
-            feedbackScaling         = G_hp.attrs['feedbackScaling']
-            inputDensity            = G_hp.attrs['inputDensity']
-            randomSeed              = G_hp.attrs['randomSeed']
-            weightGeneration        = G_hp.attrs['weightGeneration']
-            extendedStateStyle      = G_hp.attrs['extendedStateStyle']
-            use_feedback            = G_hp.attrs['use_feedback']
-            bias_in                 = G_hp.attrs['bias_in']
-            bias_out                = G_hp.attrs['bias_out']
-            outputInputScaling                 = G_hp.attrs['outputInputScaling']
-            esn_start    = G_hp.attrs['esn_start']
-            esn_end      = G_hp.attrs['esn_end']
-            mode = G_hp.attrs['mode']
-            transientTime = G_hp.attrs['transientTime']
-
-            
-            G_data = f.get('Data')
-            if 'y_train' in G_data:
-                y_train = np.array(G_data.get('y_train'))
-            else:
-                y_train = None
-
-            if 'u_train' in G_data:
-                u_train = np.array(G_data.get('u_train'))
-            else:
-                u_train = None
-            
-            if 'y_test' in G_data:
-                y_test = np.array(G_data.get('y_test'))
-            else:
-                y_test = None
-
-            if 'u_test' in G_data:
-                u_test = np.array(G_data.get('u_test'))
-            else:
-                u_test = None
-
-            if 'y_val' in G_data:
-                y_val = np.array(G_data.get('y_val'))
-            else:
-                y_val = None
-
-            if 'u_val' in G_data:
-                u_val = np.array(G_data.get('u_val'))
-            else:
-                u_val = None
+        # Read Data
+        G_data = f.get('Data')
+        for key in G_data.keys():
+            attr = torch.from_numpy(np.array(G_data[key])).to(_DTYPE)
+            setattr(esn,key,attr)
 
 
+        # Set Training/Testing/Validation data
+        if esn.u_train is not None and esn.y_train is not None:
+            esn.SetTrainingData(u_train=esn.u_train, y_train=esn.y_train)
+        if esn.y_test is not None:
+            esn.SetTestingData(y_test=esn.y_test, u_test=esn.u_test)
+        if esn.u_val is not None and esn.y_val is not None:
+            esn.SetValidationData(y_val=esn.y_val, u_val=esn.u_val)     
 
-
-
-        esn = ESN(  randomSeed = randomSeed,
-                    esn_start = esn_start,
-                    esn_end = esn_end,
-                    trainingLength = trainingLength,
-                    testingLength = testingLength,
-                    validationLength = validationLength,
-                    data_timesteps = data_timesteps,
-                    n_input = n_input,
-                    n_output =  n_output,
-                    n_reservoir = n_reservoir,
-                    leakingRate = leakingRate,
-                    spectralRadius = spectralRadius,
-                    reservoirDensity = reservoirDensity,
-                    regressionParameter = regressionParameter,
-                    bias_in = bias_in,
-                    bias_out = bias_out,
-                    outputInputScaling = outputInputScaling,
-                    inputScaling = inputScaling,
-                    inputDensity = inputDensity,
-                    noiseLevel_in = noiseLevel_in,
-                    noiseLevel_out = noiseLevel_out,
-                    mode = mode,
-                    weightGeneration = weightGeneration,
-                    transientTime = transientTime,
-                    extendedStateStyle = extendedStateStyle,
-                    use_feedback=use_feedback,
-                    feedbackScaling=feedbackScaling,
-                    verbose = False
-                )
-            
-        if u_train is not None and y_train is not None:
-            esn.SetTrainingData(u_train = u_train, y_train = y_train)
-        if y_test is not None:
-            esn.SetTestingData(y_test = y_test, u_test = u_test)
-        if u_val is not None and y_val is not None:
-            esn.SetValidationData(y_val=y_val, u_val=u_val)     
-    
-
-        esn.setDevice(_DEVICE)
-
+        if toClose:
+            f.close()
+        
         return esn
 
-#--------------------------------------------------------------------------
+ #--------------------------------------------------------------------------
     @classmethod
-    def hyperparameter_intervals(cls):
+    def get_HP_info(cls):
         '''
-            Returns valid invtervals for hyperparameters. Might be used for random searches in these intervals.
-
-            RETURN:
-                HP_range_dict - hyperparameter interval dict
+            Prints all hyperparameter information.
         '''
 
-        HP_range_dict = {}
+        for key,val in HP_dict.items():
+            print(f"{key} - " +val["INFO"])
 
-        HP_range_dict['n_reservoir'] = (1e2,5e3)
-        HP_range_dict['leakingRate'] = (1e-2,1e0)
-        HP_range_dict['spectralRadius'] = (1e-3,2e0)
-        HP_range_dict['reservoirDensity'] = (1e-2,1e0)
-        HP_range_dict['dataScaling'] = (1e-2,5e0)
-        HP_range_dict['regressionParameter'] = (1e-6,1e1)
-        HP_range_dict['bias_in'] = (1e-3,1e0)
-        HP_range_dict['bias_out'] = (1e-3,1e0)
-        HP_range_dict['outputInputScaling'] = (1e-3,1e0)
-        HP_range_dict['inputScaling'] = (1e-2,1e1)
-        HP_range_dict['inputDensity'] = (1e-2,1e0)
-        HP_range_dict['noiseLevel_in'] = (1e-6,1e0)
-        HP_range_dict['noiseLevel_out'] = (1e-6,1e0)
-        
-        return HP_range_dict 
- 
+ #--------------------------------------------------------------------------
+    @classmethod
+    def get_HP_dict(cls):
+        '''
+            Returns hyperparameter dict.
+        '''
+        return HP_dict
+
 #--------------------------------------------------------------------------     
 #--------------------------------------------------------------------------
-#  RESERVOIRS
+#  Standard ESNs
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
     @classmethod
-    def ml4ablReservoir(cls, 
-                        data_timesteps: int = 2000, 
-                        trainingLength: int = 700, 
-                        testingLength: int = 500, 
-                        validationLength: int = 500,
-                        mode: str = 'auto', 
-                        verbose: bool = False):
-        '''
-            Machine learning for atmospheric boundary layer project. Data should be the first 300 POD time coefficients
-            of 2D RBC data with Neumann boundary conditions for the buoyancy.
+    def vanilla_esn(cls):
 
-        '''
-
-        assert mode in _ESN_MODES,'Error: unkown mode {0}. Choices {1}'.format(mode, _ESN_MODES)
-
-        esn_timesteps = trainingLength + testingLength + validationLength
-        esn_start = data_timesteps - esn_timesteps
-        esn_end = data_timesteps
-
-        esn = cls(  randomSeed = 0,
-                    esn_start = esn_start, 
-                    esn_end = esn_end,
-                    trainingLength =trainingLength, 
-                    testingLength = testingLength,
-                    validationLength = validationLength,
-                    data_timesteps = data_timesteps,
-                    n_input = 300,
-                    n_output = 300,
-                    n_reservoir = 4096,
-                    leakingRate = 1.0, 
-                    spectralRadius = 0.95,
-                    reservoirDensity = 0.84,
-                    regressionParameter = 5e-2,
-                    bias_in = 1.0,
-                    bias_out = 1.0,
-                    outputInputScaling = 1.0,
-                    inputScaling = 1.0, 
-                    inputDensity = 1.0, 
-                    noiseLevel_in  = 0.0,
-                    noiseLevel_out = 0.0,
-                    mode = mode,
-                    weightGeneration = "uniform",
-                    extendedStateStyle = 'default',
-                    transientTime = 50,
-                    use_feedback = False,
-                    feedbackScaling = 1,
-                    verbose = verbose
-                )
-            
-        return esn
-
-#--------------------------------------------------------------------------
-    @classmethod
-    def L63Reservoir(cls, 
-                     data_timesteps: int = 5000, 
-                     trainingLength: int = 2059, 
-                     testingLength: int = 1444, 
-                     validationLength: int = 1444,
-                     mode: str = 'auto', 
-                     verbose: bool = False):
-        '''
-            Lorenz 63' standard reservoir. 
-        '''
-
-        assert mode in _ESN_MODES,'Error: unkown mode {0}. Choices {1}'.format(mode, _ESN_MODES)
-
-        esn_timesteps = trainingLength + testingLength + validationLength
-        esn_start = data_timesteps - esn_timesteps
-        esn_end = data_timesteps
-
-        esn = cls(  randomSeed = 0,
-                    esn_start = esn_start, 
-                    esn_end = esn_end,
-                    trainingLength =trainingLength, 
-                    testingLength = testingLength,
-                    validationLength = validationLength,
-                    data_timesteps = data_timesteps,
-                    n_input = 300,
-                    n_output = 300,
-                    n_reservoir = 4096,
-                    leakingRate = 1.0, 
-                    spectralRadius = 0.95,
-                    reservoirDensity = 0.84,
-                    regressionParameter = 5e-2,
-                    bias_in = 1.0,
-                    bias_out = 1.0,
-                    outputInputScaling = 1.0,
-                    inputScaling = 1.0, 
-                    inputDensity = 1.0, 
-                    noiseLevel_in  = 0.0,
-                    noiseLevel_out = 0.0,
-                    mode = mode,
-                    weightGeneration = "uniform",
-                    extendedStateStyle = 'default',
-                    transientTime = 44,
-                    use_feedback = False,
-                    feedbackScaling = 1,
-                    verbose = verbose
-                )
+        esn = cls( randomSeed= 0,
+                    esn_start=1, 
+                    esn_end=200,
+                    trainingLength=100, 
+                    testingLength=50,
+                    validationLength=50,
+                    data_timesteps=200,
+                    n_input=1,
+                    n_output=1)
 
         return esn
 
@@ -1331,30 +1180,104 @@ class ESN:
 #  EXPERIMENTAL
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
-    def activation_arg_dist(self, bins_input: torch.Tensor, bins_res: torch.Tensor, X_pred: torch.Tensor = None):
+    def compute_activation_arg_distribution(self, 
+                                            bins_input: Union[int,torch.Tensor] = 40, 
+                                            bins_res: Union[int,torch.Tensor] = 40, 
+                                            bins_fb: Union[int,torch.Tensor] = 40,
+                                            phase: str = 'test'):
         '''
-        Gives information about the distribution of values inside the activation function. Useful for assment of activation saturation.
+        Inspect distribution of X_in, X_res, X_fb & X_total = X_in + X_res + X_fb, where X are the ESN weights times the input/reservoir state/feedback.
+
+            tanh(X_in + X_res + X_fb)
+
+        Input, reservoir state & feedback values are chosen according to specified ESN prediction phase.
+        Might be of use for assment of activation saturation.
+        Note that historgram of total arguments share the same bins as the input.
 
         INPUT:
             bins_input  - bins to use for computing the distribution of Win@u (inputs)
             bins_res    - bins to use for computing the distribution of Wres@x (reservoir states)
-            X_pred      - reservoir state matrix (prediction phase)
+            bins_fb     - bins to use for computing the distribution of Wfb@y (feedbacks)
+            phase       - str indicating for which phase the distributions should be computed: 'train', 'test', 'validation'
         RETURN:
             hist_total  - historam of Win@u + Wres@x
             hist_input  - histogram of Win@u
             hist_res    - histogram of Wres@x
+            hist_fb     - histogram of Wfb@y
+
+            bins_total  - bins of hist_total
+            bins_input  - bins of hist_input
+            bins_res    - bins of hist_res
+            bins_fb     - bins of hist_fb
+
         '''
 
-        #TO DO: adapt range of bins to data, scaling, and spectral radius
-        #TO DO: s_pred with nans could happen before
+        if phase == 'train':
+            x = self.x_train
+            u = self.u_train[self.transientTime:]
+            y = self.y_train[self.transientTime:]
+        elif phase == 'test':
+            x = self.x_test
+            u = self.u_test
+            y = self.y_test
+        elif phase == 'validation':
+            x = self.x_val
+            u = self.u_val
+            y = self.y_val
+        else:
+            raise NotImplementedError("Error: phase can only be train, test or validation")
+
         
-        arg_res = self.Wres@X_pred[int(1+self.n_input):,:]
-        arg_input = self.Win@torch.cat((torch.ones((1,self.xrows), device = self.device, dtype = _DTYPE),self.Wout ),dim = 0)@X_pred
-           
-        hist_res, _ = np.histogram(arg_res.flatten(), bins = bins_res)
-        hist_input, _  = np.histogram(arg_input.flatten(), bins = bins_input)
-        hist_total, _  = np.histogram((arg_res+arg_input).flatten(), bins = bins_input)
+        # Reservoir activation argument
+        #-----------------------------
+        arg_res = self.Wres@x[int(1+self.n_input):,:]
+        hist_res, bins_res = np.histogram(arg_res.flatten(), bins = bins_res)
+        hist_res   = hist_res/len(arg_res.flatten())
+
+
+        # Input activation argument
+        #-----------------------------
+        if self.mode == _ESN_MODES[0]:
+            inp = torch.cat((torch.ones((1,self.xrows), device = self.device, dtype = _DTYPE),self.Wout ),dim = 0)@x
+            arg_input = self.Win@inp
+
+        elif self.mode == _ESN_MODES[1]:
+            inp = torch.cat((torch.ones((u.shape[0],1),device = self.device, dtype = _DTYPE),u),dim=1)
+            arg_input = self.Win@inp.T
+
+        hist_input, bins_input  = np.histogram(arg_input.flatten(), bins = bins_input)
+        hist_input = hist_input/len(arg_input.flatten())
         
-        return hist_total/len((arg_res + arg_input).flatten()), hist_input/len(arg_input.flatten()), hist_res/len(arg_res.flatten())
+
+         # Feedback activation argument
+        #-----------------------------
+        if self.use_feedback:
+            if self.mode == _ESN_MODES[0]:
+                inp = torch.cat((torch.ones((1,self.xrows), device = self.device, dtype = _DTYPE),self.Wout ),dim = 0)@x
+                arg_fb = self.Wfb@inp
+
+            elif self.mode == _ESN_MODES[1]:
+                arg_fb = self.Wfb@y
+            
+            hist_fb, bins_fb = np.histogram(arg_fb.flatten(), bins = bins_fb)
+            hist_fb    = hist_fb/len(arg_fb.flatten())
+        else:
+            hist_fb = np.zeros(bins_fb)
+            bins_fb = np.zeros(bins_fb+1)
+
+        
+        # Total activation argument (input+reservoir+feedback)
+        #--------------------------------------------------------
+        if not self.use_feedback:
+            hist_total, bins_input  = np.histogram((arg_res+arg_input).flatten(), bins = bins_input)
+            hist_total = hist_total/len((arg_res + arg_input).flatten())
+        else:
+             hist_total, bins_input  = np.histogram((arg_res+arg_input+arg_fb).flatten(), bins = bins_input)
+             hist_total = hist_total/len((arg_res+arg_input+arg_fb).flatten())
+
+        bins = [bins_input,bins_input,bins_res,bins_fb]
+        hist = [hist_total, hist_input, hist_res, hist_fb]
+        
+        return hist,bins
 
 #--------------------------------------------------------------------------

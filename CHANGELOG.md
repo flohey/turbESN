@@ -96,7 +96,7 @@
 - corrected PyDoc in RunturbESN method in util.py
 
 
-## Release 0.0.1.8.9.8
+## Release 0.0.1.9.0.1
 ---------------------
 ### 19.08.2022
 - `__init__.py`: import `__version__`
@@ -106,3 +106,68 @@
 ### 22.08.2022
 - fixed logging error in SetTrainingData in core.py
 - **implemented feedback weights, where last ESN output is passed to the reservoir**
+
+## Release 0.0.1.9.0.2
+---------------------
+### 22.08.2022
+- fixed error in verifyReservoirConvergence method in core.py
+
+### 24.08.2022
+- renamed study_parameters to study_tuple in several methods in util.py
+
+### 02.09.2022
+- added _modes.py to root dir (.py files read constants & mode values from here now)
+- added hyperparameters.json to root dir
+- added get_HP_info method in core.py 
+- updated save method in core.py to work with hyperparameters.json
+- updated InitRandomSearchStudyOrder method in util.py to work with hyperparameters.json
+
+- changed variable names (stay more consistent in naming convention): 
+    - pred_init_input -> test_init_input (core.py)
+    - x_fit   -> x_train (util.py)
+    - x_pred  -> x_test  (util.py)
+- changed launch_thread_RunturbESN, launch_process_RunturbESN in study.py to assess whethe weight matrices Wres,Win,Wfb must be recomputed or can be computed once per random seed
+- adapted RunturbESN in util.py accordingly
+
+### 03.09.2022
+- added get_size method in core.py
+
+
+### 05.09.2022
+- fixed bug, that provided prediction input would not be used in predidct method in util.py
+- added undo_minmax_scaling method in util.py
+
+### 13.09.2022
+- added ReadESNOutput, ReadMSE to util.py (separated the ReadStudy method)
+- edited ReadStudy method in util.py
+
+### 26.09.2022
+- added new fit option: pseudo-inverse
+
+### 27.09.2022
+- refined user_study_w_config.py and changed name to run_gs.py
+- refined esn_config.yaml
+
+
+### 24.10.2022
+- changed name CreateHDF5Groups to create_hdf5_groups in util.py
+- changed name InitRandomStudyOrder to init_random_search in util.py
+- added init_grid_search to util.py
+- refined esn_config.yaml
+- refined run_gs.py
+
+### 03.11.2022
+- renamed doRandomSearch parameter in esn_config.yaml
+- fixed bug in predict method in core.py
+- renamed verifyReservoirConvergence to verify_echo_state_property in core.py
+- added verify_echo_state_property to run_gs.py
+- added fit_method & mode to hyperparameters.json
+- fixed bug in read in core.py
+
+### 04.11.2022
+- adapted read method in core.py to read all data from hdf5
+- renamed  activation_arg_dist method to compute_activation_arg_distribution in core.py
+- adapted compute_activation_arg_distribution method to feedback argument + added option to specify ESN prediction phase
+- changed logging state in verify_echo_state_property method from error to warn in core.py
+- added plot_activation_arg_distribution to util.py
+- use importlib.resources for finding path to hyperparameters.json
