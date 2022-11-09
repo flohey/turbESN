@@ -171,3 +171,9 @@
 - changed logging state in verify_echo_state_property method from error to warn in core.py
 - added plot_activation_arg_distribution to util.py
 - use importlib.resources for finding path to hyperparameters.json
+- added plot_esn_predictions to util.py
+
+
+## Release 0.0.1.9.1.3
+----------------------
+- fixed minor issues in run_gs.py

@@ -268,7 +268,7 @@ if __name__ == '__main__':
     esn.SetValidationData(y_val=y_val, u_val = u_val, val_init_input=y_test[-1:,:]) 
 
     #----------------------------------------------------
-    # 5. RUN STUDY 
+    # 6. RUN STUDY 
     # - copy ESN parameters to each subprocess
     # - distribute different seeds among processes
     # - distribute different ESN settings among threads

@@ -9,7 +9,7 @@ In order to install the package just use `pip3 install turbESN`. Here you can fi
 ## Requirements
 Stable for
 - `python `>=  3.6.0
-- `torch`  >= 1.9.0
+- `torch`  >= 1.10.0
 - `numpy`  >= 1.20.1
 - `h5py`   >= 2.10.0 
 
