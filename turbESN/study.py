@@ -1,9 +1,11 @@
 #turbESN
 from .util import (
-    SaveStudy, 
-    RunturbESN,
+    save_study, 
+    run_turbESN,
     forward_validate_auto_ESN,
-    ComputeWassersteinDistance
+    compute_wasserstein_distance,
+    compute_mse,
+    compute_nrmse
     )
 
 from .core import ESN
@@ -35,22 +37,23 @@ import importlib.resources as pkg_resources
 with pkg_resources.path(__package__,'hyperparameters.json') as hp_dict_path:
     with open(hp_dict_path,'r') as f:
         HP_dict = json.load(f)   
+
 #--------------------------------------------------------------------------------------------------------
-def launch_thread_RunturbESN(thread_args):
+def thread_run_turbESN(thread_args) -> Tuple[int,np.ndarray,np.ndarray,np.ndarray,np.ndarray,np.ndarray,dict]:
     ''' Runs an ESN with given esn.
     INPUT:
         esn                - ESN class object containing the reservoir parameters and training & validation/testing data sets.
         config_istudy      - study parameter configuration for this ESN run
         study_tuple        - set containing the names of the parameter that are studied
-        istudy             - study ID
-        nstudy             - no. studies
+        istudy             - study identifier (can either be current ESN setting identifier (parallelize seeds) or ESN random seed identifier (parallelize settings))
+        nstudy             - no. studies (either no. settings (nsetting) or no. RNG seeds (nseed))
         recompute_Win      - whether input matrix must be initialized
         recompute_Wres     - whether reservoir matrix must be initialized
         recompute_Wfb      - whether feedback matrix must be initialized
 
     RETURN:
-        istudy     - Study ID
-        mse_train  - mean square error of (teacher forced!) reservoir output (to training target data set y_train). Mean w.r.t. timestep-axis. 
+        istudy     - study ID
+        mse_train  - mean square error of (teacher forced) reservoir output (to training target data set y_train). Mean w.r.t. timestep-axis. 
         mse_test   - mean square error of reservoir output (to testing data set y_test). Mean w.r.t. timestep-axis. 
         mse_val    - mean square error of reservoir output (to validation data set y_val). Mean w.r.t. timestep-axis. 
         y_pred_test- testing reseroir outputs, produced by the given reservoir specified in esn.
@@ -59,19 +62,19 @@ def launch_thread_RunturbESN(thread_args):
      '''
 
     esn, config_istudy, study_tuple, istudy, nstudy, recompute_Win, recompute_Wres, recompute_Wfb = thread_args
-    torch.manual_seed(esn.randomSeed)
     study_dict = esn.SetStudyParameters(config_istudy, study_tuple)
-    mse_train, mse_test, mse_val, y_pred_test, y_pred_val = RunturbESN(esn,
-                                                                       recompute_Win=recompute_Win,
-                                                                       recompute_Wres=recompute_Wres,
-                                                                       recompute_Wfb=recompute_Wfb)
+
+    loss_dict, y_pred_test, y_pred_val = run_turbESN(esn,
+                                                    recompute_Win=recompute_Win,
+                                                    recompute_Wres=recompute_Wres,
+                                                    recompute_Wfb=recompute_Wfb)    
 
     if esn.id % _ID_PRINT == 0: 
         logging.warn("ID {0}: study {1}/{2} done.".format(esn.id, istudy+1, nstudy))
 
-    return (istudy, mse_train.numpy(), mse_test.numpy(), mse_val.numpy(), y_pred_test.numpy(), y_pred_val.numpy(), study_dict)
+    return (istudy, loss_dict, y_pred_test, y_pred_val, study_dict)
 #-------------------------------------------------------------------------------------------------------- 
-def launch_process_RunturbESN(launch_thread_args) -> Tuple[int, list, int, str]:
+def parallelize_seeds(launch_thread_args) -> Tuple[int, list, int, str]:
     ''' Launches ThreadPool with maximum of MAX_THREADS threads Each thread runs an ESN setting (same RNG seed). 
         The ThreadPool is finished when all studies have been run. 
     
@@ -80,17 +83,18 @@ def launch_process_RunturbESN(launch_thread_args) -> Tuple[int, list, int, str]:
         filepath_esn  - path to which the hdf5 file of the ESN study was saved to 
         MAX_THREADS   - max. no. threads per process
         config        - study configuration
-        nstudy        - no. studies
+        nsetting      - no. ESN grid search settings
         study_tuple   - tuple specifying the study parameters
     RETURN:
-        esn_id        - RNG seed of the ESN
-        study_results - results of all studies (same RNG seed). Final shape: [RESULTS RUN1, ..., RESULTS RUN nstudy], 
+        esn_id        - ESN id
+        randomSeed    - RNG seed of the ESN runs
+        study_results - results of all studies (same RNG seed). Final shape: [RESULTS RUN1, ..., RESULTS RUN nsetting], 
                         where all RESULTS has shape (istudy, mse_train, mse_test, y_pred, study_dict)
-        nstudy        - no. studies
+        nsetting      - no. ESN grid search settings
         filepath_esn  - path to which the hdf5 file of the ESN study was saved to 
     '''
 
-    esn, filepath_esn, MAX_THREADS, config, nstudy, study_tuple = launch_thread_args
+    esn, filepath_esn, MAX_THREADS, config, nsetting, study_tuple = launch_thread_args
 
     study_results = []
     logging.warn('Subprocess {0} starting.'.format(esn.id))
@@ -129,15 +133,16 @@ def launch_process_RunturbESN(launch_thread_args) -> Tuple[int, list, int, str]:
 
     with executor as ex:
         study_counter = 0
-        while study_counter < nstudy:
+        while study_counter < nsetting:
             
             num_threads = MAX_THREADS
-            if (nstudy-study_counter) < MAX_THREADS:
-                num_threads  = nstudy-study_counter
-                
-            thread_results = ex.map(launch_thread_RunturbESN, ([deepcopy(esn), config[istudy], study_tuple, istudy, nstudy,recompute_Win,recompute_Wres,recompute_Wfb] 
-                                                 for istudy 
-                                                 in np.arange(study_counter,study_counter+num_threads))
+            if (nsetting-study_counter) < MAX_THREADS:
+                num_threads  = nsetting-study_counter
+
+            # execute threads
+            thread_results = ex.map(thread_run_turbESN, ([deepcopy(esn), config[isetting], study_tuple, isetting, nsetting, recompute_Win,recompute_Wres,recompute_Wfb] 
+                                                 for ii,isetting 
+                                                 in enumerate(np.arange(study_counter,study_counter+num_threads)))
                                     )
             study_results.append(list(thread_results))
             study_counter += num_threads
@@ -151,36 +156,147 @@ def launch_process_RunturbESN(launch_thread_args) -> Tuple[int, list, int, str]:
     
     study_results = [result for chunks in study_results for result in chunks]   
 
-    return (esn.id, study_results, nstudy, filepath_esn)
+    return (esn.id, esn.randomSeed, study_results, nsetting, filepath_esn)
 #--------------------------------------------------------------------------------------------------------
-def Callback(callback_args):
+def callback_seeds(callback_args):
     ''' Callback to main process. Saves results of each seed into open hdf5 file f.
-    
+        ESN ID is the identifier for the ESN RNG seed. 
     INPUT:
-        esn_id        - RNG seed of the ESN runs
-        study_results - results of all studies (same RNG seed). Final shape: [RESULTS RUN1, ..., RESULTS RUN nstudy], 
-                        where all RESULTS has shape (istudy, mse_train, mse_test, y_pred, study_dict)
-        nstudy        - no. studies
+        esn_id        - ESN id
+        randomSeed    - RNG seed of the ESN runs
+        study_results - results of all studies (same RNG seed). Final shape: [RESULTS RUN1, ..., RESULTS RUN nsetting], 
+                        where all RESULTS have shape (istudy, mse_train, mse_test, y_pred, study_dict)
+        nsetting        - no. studies
         filepath_esn  - path to which the hdf5 file of the ESN study was saved to
     '''
     
-    esn_id, study_results, nstudy, filepath_esn = callback_args
+    esn_id, randomSeed, study_results, nsetting, filepath_esn = callback_args
 
     if esn_id % _ID_PRINT == 0:
         logging.debug('ID {0}: returning to main process for saving.'.format(esn_id))
 
-    for ii in range(nstudy):
-        istudy, mse_train, mse_test, mse_val, y_pred_test, y_pred_val, study_dict= study_results[ii] 
-        SaveStudy(filepath=filepath_esn, esn_id=esn_id, studyID=istudy,  
-                  study_dict=study_dict, y_pred_test=y_pred_test, y_pred_val=y_pred_val, 
-                  mse_train=mse_train, mse_test=mse_test, mse_val=mse_val) 
+    for ii in range(nsetting):
+        isetting, loss_dict, y_pred_test, y_pred_val, study_dict= study_results[ii] 
+
+        save_study(filepath=filepath_esn, 
+                   iseed=esn_id, 
+                   isetting=isetting,  
+                   study_dict=study_dict, 
+                   y_pred_test=y_pred_test, 
+                   y_pred_val=y_pred_val, 
+                   loss_dict=loss_dict,
+                   randomSeed=randomSeed) 
         
     if esn_id % _ID_PRINT == 0:        
         logging.warn('Saved study for ID {0}.'.format(esn_id))
+
 #--------------------------------------------------------------------------------------------------------
+def parallelize_settings(launch_thread_args) -> Tuple[int, list, int, str]:
+    ''' Launches ThreadPool with maximum of MAX_THREADS threads Each thread runs the same ESN setting, but different RNG seed. 
+        The ThreadPool is finished when all studies have been run. 
+    
+    INPUT:
+        esn           - ESN object 
+        filepath_esn  - path to which the hdf5 file of the ESN study was saved to 
+        MAX_THREADS   - max. no. threads per process
+        config_study  - configuration of this particular study
+        isetting      - study identifier
+        seeds         - list of RNG seeds 
+        study_tuple   - tuple specifying the study parameters
+    RETURN:
+        esn_id        - ESN id
+        study_results - results of all studies (same ESN grid search setting). Final shape: [RESULTS RUN1, ..., RESULTS RUN nseed], 
+                        where all RESULTS has shape (isetting, mse_train, mse_test, y_pred, study_dict)
+        seeds         - list of RNG seeds 
+        filepath_esn  - path to which the hdf5 file of the ESN study was saved to 
+    '''
 
+    esn, filepath_esn, MAX_THREADS, config_isetting, isetting, seeds, study_tuple = launch_thread_args
 
+    nseed = len(seeds)
+    study_results = []
+    logging.warn('Subprocess {0} starting.'.format(esn.id))        
 
+    #-----------------------------------------------
+    # Weights must be recomputed for differnt seeds
+    #-----------------------------------------------
+    recompute_Win  = True
+    recompute_Wres = True
+    recompute_Wfb  = True
+
+    #----------------------------------
+    #Launch ThreadPool
+    #----------------------------------
+    executor = futures.ThreadPoolExecutor(MAX_THREADS)
+
+    with executor as ex:
+        study_counter = 0
+        while study_counter < nseed:
+            
+            num_threads = MAX_THREADS
+            if (nseed-study_counter) < MAX_THREADS:
+                num_threads  = nseed-study_counter
+                
+            # assign ESN random seeds 
+            esn_copies = [deepcopy(esn) for _ in range(num_threads)]
+            for ii,esn_copy in enumerate(esn_copies):
+                esn_copy.SetRandomSeed(seeds[study_counter+ii]) 
+
+            # execute threads
+            thread_results = ex.map(thread_run_turbESN, 
+                                    ([esn_copies[ii],config_isetting,study_tuple,iseed,nseed,recompute_Win,recompute_Wres,recompute_Wfb] 
+                                    for ii,iseed in enumerate(np.arange(study_counter,study_counter+num_threads)))
+                                    )
+            study_results.append(list(thread_results))
+            study_counter += num_threads
+
+   
+    logging.warn('ID {0} all done.'.format(esn.id))
+    
+    #----------------------------------
+    #Reshape result list
+    #----------------------------------
+    
+    study_results = [result for chunks in study_results for result in chunks]   
+
+    return (esn.id, study_results, seeds, filepath_esn)
+
+#--------------------------------------------------------------------------------------------------------
+def callback_settings(callback_args):
+    ''' Callback to main process. Saves results of each seed into open hdf5 file f.
+        ESN ID is the identifier for the ESN grid search setting. 
+    
+    INPUT:
+        esn_id        - ESN id
+        study_results - results of all studies (same RNG seed). Final shape: [RESULTS RUN1, ..., RESULTS RUN nseed], 
+                        where all RESULTS have shape (iseed, mse_train, mse_test, y_pred, study_dict)
+        seeds         - list of RNG seeds 
+        filepath_esn  - path to which the hdf5 file of the ESN study was saved to
+    '''
+    
+    esn_id, study_results, seeds, filepath_esn = callback_args
+
+    nseed = len(seeds)
+
+    if esn_id % _ID_PRINT == 0:
+        logging.debug('ID {0}: returning to main process for saving.'.format(esn_id))
+
+    for ii,seed in enumerate(seeds):
+        iseed, loss_dict, y_pred_test, y_pred_val, study_dict= study_results[ii] 
+
+        save_study(filepath=filepath_esn, 
+                   iseed=iseed, 
+                   isetting=esn_id,
+                   study_dict=study_dict, 
+                   y_pred_test=y_pred_test, 
+                   y_pred_val=y_pred_val, 
+                   loss_dict=loss_dict,
+                   randomSeed=seed) 
+        
+    if esn_id % _ID_PRINT == 0:        
+        logging.warn('Saved study for ID {0}.'.format(esn_id))
+
+#--------------------------------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------------------------
 # CROSS VALIDATION STUDY  (k-fold forward walk validaiton scheme, see Lukosevicius et al. (2021))
@@ -281,3 +397,41 @@ def launch_process_forward_validate_turbESN(launch_thread_args) -> Tuple[int, li
     return (esn.id, study_results, nstudy, filepath_esn)
 #--------------------------------------------------------------------------------------------------------
 
+#-------------------------------------------------------------------------------------------------
+# EXPERIMENTAL
+#-------------------------------------------------------------------------------------------------
+def callback_seeds_postprocess(callback_args):
+    ''' Callback to main process. Use ESN predictions for post-processing.
+        Saves all results of each seed into open hdf5 file f.
+        ESN ID is the identifier for the ESN RNG seed. 
+    INPUT:
+        esn_id        - ESN id
+        randomSeed    - RNG seed of the ESN runs
+        study_results - results of all studies (same RNG seed). Final shape: [RESULTS RUN1, ..., RESULTS RUN nsetting], 
+                        where all RESULTS have shape (istudy, mse_train, mse_test, y_pred, study_dict)
+        nsetting        - no. studies
+        filepath_esn  - path to which the hdf5 file of the ESN study was saved to
+    '''
+    
+    esn_id, randomSeed, study_results, nsetting, filepath_esn = callback_args
+
+    if esn_id % _ID_PRINT == 0:
+        logging.debug('ID {0}: returning to main process for post-processing & saving.'.format(esn_id))
+
+    for ii in range(nsetting):
+        isetting, mse_train, mse_test, mse_val, y_pred_test, y_pred_val, study_dict= study_results[ii] 
+
+        # TO DO
+        # add post processing
+        # fields_true, fields_pred = reconstruct_form_pod(y_true,y_pred_test,spatial_modes)
+        # lta_true, lta_pred = compute_LTA()
+        # nare = compute_NARE(lta_true,lta_pred)
+        # error_dict = {'nare': nare}
+        save_study(filepath=filepath_esn, iseed=esn_id, isetting=isetting,  
+                  study_dict=study_dict, y_pred_test=y_pred_test, y_pred_val=y_pred_val, 
+                  mse_train=mse_train, mse_test=mse_test, mse_val=mse_val,randomSeed=randomSeed) #error_dict
+        
+    if esn_id % _ID_PRINT == 0:        
+        logging.warn('Saved study for ID {0}.'.format(esn_id))
+
+#--------------------------------------------------------------------------------------------------------

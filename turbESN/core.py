@@ -1,3 +1,6 @@
+#turbESN
+from ._modes import (_DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT, _FIT_METHODS)
+
 import torch
 import numpy as np
 import sys
@@ -6,10 +9,6 @@ import h5py
 import json
 from typing import Union, Tuple, List
 import logging
-
-#turbESN
-from ._modes import (_DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT, _FIT_METHODS)
-
 
 # Read hyperparameter.json
 import importlib.resources as pkg_resources
@@ -117,26 +116,30 @@ class ESN:
         assert fit_method in _FIT_METHODS, "Error: unknown fit_method {0}. Choices {1}".format(fit_method, _FIT_METHODS)
         self.fit_method =  fit_method
 
+
         # Init to None
         self.y_train = None           
         self.u_train = None
         self.y_test  = None
         self.u_test  = None
-        self.y_val  = None
-        self.u_val  = None
-        
+        self.y_val   = None
+        self.u_val   = None
+        self.u_pre_val = None
+        self.y_pre_val = None
+
         self.test_init_input = None
-        self.val_init_input = None
+        self.val_init_input  = None
 
         self.x_train = None
-        self.x_test = None
-        self.x_val = None
+        self.x_test  = None
+        self.x_val   = None
 
-        self.Win = None
+        self.Win  = None
         self.Wout = None
-        self.Wfb = None
+        self.Wfb  = None
         self.Wres = None
 
+        self.loss_func = None
 #--------------------------------------------------------------------------     
 #--------------------------------------------------------------------------
 #  ESN IMPLEMENTATION
@@ -230,8 +233,9 @@ class ESN:
             raise RuntimeError
         else:
             _feedbackScaling = self.feedbackScaling
-
+        
         self.Wfb *= _feedbackScaling.reshape(1,self.n_output)
+        
 #--------------------------------------------------------------------------
     def createWeightMatrices(self):
         '''
@@ -386,8 +390,8 @@ class ESN:
         for it in range(input_timesteps):
             
             #peak to peak distance
-            ptp = x_init.max(dim = 0)[0] - x_init.min(dim = 0)[0]
-
+            ptp = x_init.max(dim = 0).values - x_init.min(dim = 0).values
+            
             #states are close
             if torch.max(ptp) < proximity_distance:
                 if steps >= proximity_time:
@@ -635,7 +639,7 @@ class ESN:
         self.y_test = y_test
         self.u_test = u_test
 
-        if self.mode == 'auto':
+        if self.mode == _ESN_MODES[0]:
 
             if self.y_train is None:
                 assert test_init_input is not None, 'Initial testing input and self.y_train not specified.\n'
@@ -648,10 +652,10 @@ class ESN:
             elif test_init_input is not None:
                 self.test_init_input = test_init_input
 
-        elif self.mode == 'teacher':
+        elif self.mode == _ESN_MODES[1]:
             assert u_test is not None, 'Teacher mode requires non empty u_test!\n'
 
-        if self.mode == 'semi-teacher':
+        if self.mode == _ESN_MODES[2]:
 
             if test_init_input is not None:
                 self.test_init_input = test_init_input
@@ -660,21 +664,38 @@ class ESN:
 
     #--------------------------------------------------------------------------
     # FH 30.03.2022: Added Validation Datset (auto mode!)
-    def SetValidationData(self, y_val: torch.Tensor, u_val: torch.Tensor = None, val_init_input: torch.Tensor = None,):   
+    def SetValidationData(self, 
+                          y_val: torch.Tensor, 
+                          u_val: torch.Tensor=None, 
+                          val_init_input: torch.Tensor=None, 
+                          u_pre_val: torch.Tensor=None,
+                          y_pre_val: torch.Tensor=None):   
 
         assert y_val.shape[1] == self.n_output,'Validation output dimension ({0}) does not match ESN n_output ({1}).\n'.format(y_val.shape[1], self.n_output)
-    
+        
+        if self.mode == _ESN_MODES[1]:
+            assert u_val is not None, 'Teacher mode requires non empty u_val!\n'
+
+        if u_pre_val is not None:
+            assert u_pre_val.shape[1] == self.n_input, 'Validation state initialisation dimension ({0}) does not match ESN n_input ({1}).\n'.format(u_pre_val.shape[1], self.n_input)
+
         self.u_val = u_val
         self.y_val = y_val
 
-        if self.mode == 'auto':
+        if u_pre_val is not None:
+            self.u_pre_val = u_pre_val
 
-            if self.y_test is not None and val_init_input is None:
+            if self.use_feedback:
+                assert y_pre_val is not None, 'When using feedback & pre validation state propagation (u_pre_val) a target output has to be provided!'
+                self.y_pre_val = y_pre_val
+
+
+        if self.mode == _ESN_MODES[0]:
+            if val_init_input is None:
                 #Initial input is last testing input. Then first prediction aligns with the first entry of y_val
                 logging.debug('Initial validation input not specified. Using last target test output.')
                 self.val_init_input = self.y_test[-1:,:]    #initial input the trained ESN receives for the beginning of the validation phase
-
-            elif val_init_input is not None:
+            else:
                 self.val_init_input = val_init_input
 
     #--------------------------------------------------------------------------
@@ -908,9 +929,9 @@ class ESN:
 #  MISC. IMPLEMENTATIONS
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
-    def toTorch(self):
+    def to_torch(self):
         '''
-        Moves the ESNParams object to python or torch types. Torch tensors are automatically shifted to device.
+        Moves the ESN object to python or torch types. Torch tensors are automatically shifted to device.
         This will stop numpy vs. torch clashes from happening.
         '''
         
@@ -944,8 +965,8 @@ class ESN:
                 setattr(self, member, new_value)       
             
 #--------------------------------------------------------------------------
-    def setDevice(self, device: str):
-        ''' Set globael ESNParams device (cpu or cuda)'''
+    def set_device(self, device: str):
+        ''' Set globael ESN device (cpu or cuda)'''
         
         logging.debug('Setting device: {0}'.format(device))
         self.device = device
@@ -975,13 +996,13 @@ class ESN:
 
 #---------------------------------------------------------------------------
     def save(self,filepath: str, f = None):
-        ''' Saves the reservoir parameters, training and validation/testing data from ESNParams class object into a hdf5 file
+        ''' Saves the reservoir parameters, training and validation/testing data from ESN class object into a hdf5 file
     
         INPUT:
             filepath   - path to which the hdf5 file of the ESN study is saved to
         '''
         
-        toClose = False
+        to_close = False
         logging.warn('Saving ESN parameters to Hdf5 file {0}'.format(filepath))
 
         hdf5_attrs_save = (float,int,bool,list,str)
@@ -989,7 +1010,7 @@ class ESN:
 
         if f is None:
             f = h5py.File(filepath, 'w')
-            toClose = True
+            to_close = True
 
         # Save Hyperparameters & Data sets
         G_hp = f.create_group('Hyperparameters')
@@ -1003,7 +1024,7 @@ class ESN:
                         G_hp.attrs[key]= attr
                     elif isinstance(attr,hdf5_array_save):
                         if key == "leakingRate":
-                            G_hp.create_dataset(key,   data = attr, compression = 'gzip', compression_opts = 9)
+                            G_hp.create_dataset(key,  data = attr, compression = 'gzip', compression_opts = 9)
                         else:
                             G_data.create_dataset(key, data = attr, compression = 'gzip', compression_opts = 9)
                     else:
@@ -1011,7 +1032,13 @@ class ESN:
             except AttributeError:
                 pass
 
-        if toClose:
+        # Save loss dict
+        if self.loss_func is not None:
+            G_data.attrs['loss_func'] = list(self.loss_func.keys())
+        else:
+            G_data.attrs['loss_func'] = list()
+
+        if to_close:
             f.close()
 
 #--------------------------------------------------------------------------     
@@ -1093,7 +1120,7 @@ class ESN:
             esn - ESN object
         '''
 
-        toClose = False
+        to_close = False
         logging.warn('Reading ESN parameters from Hdf5 file {0}'.format(filepath))
 
         esn = ESN.vanilla_esn()
@@ -1101,7 +1128,7 @@ class ESN:
         if f is None:
             try:
                 f = h5py.File(filepath, 'r')
-                toClose = True
+                to_close = True  
             except FileNotFoundError:
                 logging.debug('Error: file {0} not found.'.format(filepath))
                 return None
@@ -1111,8 +1138,14 @@ class ESN:
         for key in G_hp.attrs.keys():
             attr = G_hp.attrs[key]
             setattr(esn,key,attr)
-        
-        # leakingRate is array
+
+        # Inferred parameters
+        if esn.extendedStateStyle == _EXTENDED_STATE_STYLES[0]:
+            setattr(esn,'xrows',int(1+esn.n_reservoir+esn.n_input))
+        else:
+            setattr(esn,'xrows',int(1+2*esn.n_reservoir)   )
+
+        # if leakingRate is array
         if "leakingRate" not in G_hp.attrs.keys():
             attr = torch.from_numpy(np.array(G_hp["leakingRate"])).to(_DTYPE)
             setattr(esn,"leakingRate",attr)
@@ -1124,6 +1157,12 @@ class ESN:
             setattr(esn,key,attr)
 
 
+        # Read loss_func
+        try:
+            esn.loss_func = list(G_data.attrs['loss_func'])
+        except KeyError:
+            esn.loss_func = None
+            
         # Set Training/Testing/Validation data
         if esn.u_train is not None and esn.y_train is not None:
             esn.SetTrainingData(u_train=esn.u_train, y_train=esn.y_train)
@@ -1132,7 +1171,7 @@ class ESN:
         if esn.u_val is not None and esn.y_val is not None:
             esn.SetValidationData(y_val=esn.y_val, u_val=esn.u_val)     
 
-        if toClose:
+        if to_close:
             f.close()
         
         return esn

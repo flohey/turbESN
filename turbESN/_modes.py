@@ -7,5 +7,5 @@ _WEIGTH_GENERATION = ('uniform', 'normal')                 # random weight gener
 _EXTENDED_STATE_STYLES = ('default', 'square')             # layout of extended state 
 _FIT_METHODS = ('tikhonov', 'pinv')                        # method of how Wout is computed
 _LOGGING_FORMAT = '%(asctime)s %(threadName)s %(levelname)s: %(message)s'
-_ID_PRINT = 4       # if esn.id % _ID_PRINT == 0: log ESN run (used in study.py only)
-_MSE_DEFAULT = 1e6  # default value for the mean square error, if nan values are encounterd during ESN run (used in RunturbESN in util.py) 
+_ID_PRINT = 4        # if esn.id % _ID_PRINT == 0: log ESN run (used in study.py only)
+_LOSS_DEFAULT = 1e6  # default value for the loss, if nan values are encounterd during ESN run (used in run_turbESN in util.py) 

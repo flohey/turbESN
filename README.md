@@ -23,11 +23,15 @@ RC is more then just a method, it stands for new computing paradigm (in contrast
 The Echo State Network (ESN) is a certain implementation of RC. Its architecture follows a Recurrent Neural Network (RNN) structure, where only the output weights are trained by linear regression. This is also a simple way of circumventing the known exploding/ vanishing gradient problem which RNN suffer from.
 
 ## Applications:
-- F. Heyder and J. Schumacher - Phys. Rev. E **103**, 053107:
+- F. Heyder and J. Schumacher - Phys. Rev. E **103**, 053107 (2021):
   "Echo state network for two-dimensional turbulent moist Rayleigh-Bénard convection"
 
-- P. Pfeffer, F. Heyder and J. Schumacher - in print Phys Rev. Res.: "Hybrid quantum-classical reservoir computing of thermal convection flow"
+- P. Pfeffer, F. Heyder and J. Schumacher - Phys Rev. Res. **4**, 033176 (2022): 
+  "Hybrid quantum-classical reservoir computing of thermal convection flow"
 
-- F. Heyder and J. P. Mellado and J. Schumacher - arXiv:2108.06195: 
-  "Echo state network models of a two-dimensional convective boundary layer "
+- F. Heyder and J. P. Mellado and J. Schumacher - Phys. Rev. E **106**, 055303 (2022): 
+  "Generalizability of reservoir computing for flux-driven two-dimensional convection"
+
+- M. S. Ghazijahani, F. Heyder, J. Schumacher and C. Cierpka, Meas. Sci. Technol. **34** (2023) 014002 
+  "On the benefits and limitations of Echo State Networks for turbulent flow prediction"
 

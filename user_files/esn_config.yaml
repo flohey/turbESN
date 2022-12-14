@@ -67,6 +67,9 @@ study_param_list:                 #[val1, val2, val3,...]
   - []
   - []
   
+# use subprocess to compute ESN settings in parallel, if False: parallelize over RNG seeds
+use_parallel_setting: True
+
 # Data paths
 #---------------------------
 path_data:     '/usr/scratch4/flhe4523/rbc2d/A4Ra1e5Pr10_fs/pod/'                       

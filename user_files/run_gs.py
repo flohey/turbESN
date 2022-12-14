@@ -3,8 +3,6 @@
 ###############################################################################################
 # DEVICE: CPU
 ###############################################################################################
-# Florian Heyder - 17.05.2022
-###############################################################################################
 
 #Parallelization
 import multiprocessing as mp
@@ -32,10 +30,12 @@ from turbESN.util import (
     create_hdf5_groups, 
     init_random_search,
     init_grid_search,
-    minmax_scaling
+    minmax_scaling,
+    compute_mse,
+    compute_nrmse
     )
 from turbESN.core import *
-from turbESN.study import launch_thread_RunturbESN, launch_process_RunturbESN, Callback
+from turbESN.study import parallelize_seeds, parallelize_settings, callback_seeds, callback_settings
 
 
 logging.warning("Using: turbESN v."+turbESN.__version__)
@@ -98,10 +98,8 @@ if __name__ == '__main__':
     # ESN (study)
     #-------------------
     nseed = yaml_config["nseed"]
-    randomSeed = range(nseed)                                              
-    esn_ids = range(nseed) 
-
-                                                
+    seeds = range(nseed)
+                                            
     study_tuple = yaml_config["study_tuple"]  
     study_param_limits = yaml_config["study_param_limits"]
     study_param_list = yaml_config["study_param_list"]
@@ -111,6 +109,7 @@ if __name__ == '__main__':
     
     assert len(study_param_list) == len(study_tuple), "Error: study_param_list must have same length as study_tuple!"
     do_random_search = yaml_config["do_random_search"]   
+    use_parallel_setting = yaml_config["use_parallel_setting"]
 
     # Path config
     #-------------------
@@ -156,14 +155,14 @@ if __name__ == '__main__':
     #----------------------------------------------------        
     if not do_random_search:
         print("Initializing grid search...\n")
-        config, nstudy  = init_grid_search(study_tuple, study_param_limits, study_param_list)
-        print('Seeds: {0}. Studies per seed: {1}\n'.format(nseed, nstudy))
+        config, nsetting  = init_grid_search(study_tuple, study_param_limits, study_param_list)
+        print('Seeds: {0}. Studies per seed: {1}\n'.format(nseed, nsetting))
     else:
         print("Initializing random search...\n")
-        nstudy = yaml_config["nstudy"]
+        nsetting = yaml_config["nsetting"]
 
-        config, nstudy = init_random_search(nstudy, study_tuple,limits=study_param_limits)
-        print('Seeds: {0}. Studies per seed: {1}\n'.format(nseed, nstudy))
+        config, nsetting = init_random_search(nsetting, study_tuple,limits=study_param_limits)
+        print('Seeds: {0}. Studies per seed: {1}\n'.format(nseed, nsetting))
 
     #----------------------------------------------------
     # 4. INIT ESN DATA
@@ -198,13 +197,13 @@ if __name__ == '__main__':
     assert esn_end <= data_timesteps, f"esn_end ({esn_end}) must be <= available data timesteps ({data_timesteps})"
 
     #normalize data to [-dataScaling,dataScaling] (along time-axis in training phase)
-    x_min = np.min(data_in[esn_start:esn_start+trainingLength],axis=0)
-    x_max = np.max(data_in[esn_start:esn_start+trainingLength],axis=0)
-    data_in_scaled = minmax_scaling(data_in,x_min=x_min,x_max=x_max,dataScaling=dataScaling) 
+    x_min_in = np.min(data_in[esn_start:esn_start+trainingLength],axis=0)
+    x_max_in = np.max(data_in[esn_start:esn_start+trainingLength],axis=0)
+    data_in_scaled = minmax_scaling(data_in,x_min=x_min_in,x_max=x_max_in,dataScaling=dataScaling) 
 
-    x_min = np.min(data_out[esn_start:esn_start+trainingLength],axis=0)
-    x_max = np.max(data_out[esn_start:esn_start+trainingLength],axis=0)
-    data_out_scaled = minmax_scaling(data_out,x_min=x_min,x_max=x_max,dataScaling=dataScaling) 
+    x_min_out = np.min(data_out[esn_start:esn_start+trainingLength],axis=0)
+    x_max_out = np.max(data_out[esn_start:esn_start+trainingLength],axis=0)
+    data_out_scaled = minmax_scaling(data_out,x_min=x_min_out,x_max=x_max_out,dataScaling=dataScaling) 
 
     #----------------------------------------------------
     # 5. ESN PARAMETERS
@@ -212,7 +211,7 @@ if __name__ == '__main__':
     # - fix ESN HP
     # - set ESN training and testing data
     #----------------------------------------------------
-    esn = ESN(randomSeed = randomSeed,
+    esn = ESN(randomSeed = seeds,
             esn_start = esn_start,
             esn_end = esn_end,
             trainingLength=trainingLength,
@@ -263,9 +262,11 @@ if __name__ == '__main__':
                                                                                 esn_end=esn_end,
                                                                                 validationLength=validationLength)
    
+    esn.loss_func=dict(mse=compute_mse,nrmse=compute_nrmse)
+    
     esn.SetTrainingData(u_train=u_train, y_train=y_train)
     esn.SetTestingData(y_test=y_test, test_init_input= y_train[-1:,:], u_test = u_test)
-    esn.SetValidationData(y_val=y_val, u_val = u_val, val_init_input=y_test[-1:,:]) 
+    esn.SetValidationData(y_val=y_val, u_val = u_val, val_init_input=y_test[-1:,:],u_pre_val=u_test) 
 
     #----------------------------------------------------
     # 6. RUN STUDY 
@@ -273,10 +274,16 @@ if __name__ == '__main__':
     # - distribute different seeds among processes
     # - distribute different ESN settings among threads
     #----------------------------------------------------
-    esn.toTorch()
+    esn.to_torch()
     esn.save(filepath_esn)
-    create_hdf5_groups(filepath_esn, esn_ids, nstudy)
-    
+    create_hdf5_groups(filepath_esn, nseed, nsetting)
+
+    with h5py.File(filepath_esn,'a') as f:
+        f["Data"].create_dataset(name='x_min_in',data=x_min_in,compression='gzip',compression_opts=9)
+        f["Data"].create_dataset(name='x_max_in',data=x_max_in,compression='gzip',compression_opts=9)
+        f["Data"].create_dataset(name='x_min_out',data=x_min_out,compression='gzip',compression_opts=9)
+        f["Data"].create_dataset(name='x_max_out',data=x_max_out,compression='gzip',compression_opts=9)
+
     # Check echo state property
     esn.createWeightMatrices()
     estimated_transientTime = esn.verify_echo_state_property(u=u_train,y=y_train)
@@ -285,22 +292,30 @@ if __name__ == '__main__':
     # Print ESN info
     print(esn)
 
-
     # Start study
     time_start = time.time()
     pool = mp.Pool(processes=MAX_PROC)
-    with h5py.File(filepath_esn,'a') as f: 
-        for esn_id,seed in enumerate(randomSeed):
-        
-            esn_copy = deepcopy(esn)
-            esn_copy.SetRandomSeed(seed)
-            esn_copy.SetID(esn_id)
 
-            pool.apply_async(launch_process_RunturbESN, args = ((esn_copy, filepath_esn, MAX_THREADS, config, nstudy, study_tuple),), callback = Callback)       
+    with h5py.File(filepath_esn,'a') as f: 
     
+        # parallelize RNG seed
+        if not use_parallel_setting:
+            print('Distributing seeds over processes')
+            for esn_id,seed in enumerate(seeds):
+                esn_copy = deepcopy(esn)
+                esn_copy.SetRandomSeed(seed)
+                esn_copy.SetID(esn_id)
+                pool.apply_async(parallelize_seeds, args = ((esn_copy, filepath_esn, MAX_THREADS, config, nsetting, study_tuple),), callback = callback_seeds)       
+        else:
+            print('Distributing settings over processes')
+            for esn_id,isetting in enumerate(range(nsetting)):
+                esn_copy = deepcopy(esn)
+                setting = config[isetting]
+                esn_copy.SetID(esn_id)
+                pool.apply_async(parallelize_settings, args = ((esn_copy, filepath_esn, MAX_THREADS, setting, isetting, seeds, study_tuple),), callback = callback_seeds)
+            
         pool.close()
         pool.join()
-
     time_end = time.time()
     print('\n ----------------------------------------')
     print('\n PROGRAM FINISHED!')

@@ -177,3 +177,64 @@
 ## Release 0.0.1.9.1.3
 ----------------------
 - fixed minor issues in run_gs.py
+- changed syntac in verify_echo_state_property method in util.py
+- fixed bug in plot_esn_predictions method in util.py
+
+### 14.11.2022
+- renamed launch_process_RunturbESN to parallelize_seeds in study.py
+- renamed Callback to callback_seeds in study.py
+- renamed start_thread_RunturbESN to thread_RunturbESN in study.py
+- renamed nstudy to nsettings in util.py, core.py & study.py
+- renamed istudy to isetting in util.py, core.py & study.py
+- renamed CreateStudyConfigArray to create_study_config_list in util.py
+- fixed bug in SaveStudy in util.py, renamed some variables
+- added parallelize_settings & callback_setting methods in study.py 
+- adapted descriptions and small details in parallelize_seeds & callback_seeds in util.py
+- adapted create_hdf5_groups method in util.py to only take ints as args
+- adapted run_gs.py, amongst other: choose between parallelization
+- new convention: esn.id is only used to keep track of different es instances among different subprocesses, it is only used in study.py!
+    - adapted in SaveStudy, ReadStudy, ReadMSE, ReadESNOutput
+- renamed SaveStudy, ReadStudy, ReadMSE, ReadESNOutput to snake case equivalents
+
+### 22.11.2022
+- added default values to style_dict in plot_esn_predictions & plot_activation_arg_distribution in util.py
+
+### 25.11.2022
+- added type hints in thread_RunturbESN in study.py
+- added callback_seeds_postprocess method to study.py
+
+### 12.12.2022
+- fixed error in read method in core.py, where self.xrows was not adapted correctly
+- added member variable u_pre_val to ESN object in core.py
+- added option to set u_pre_val via SetValidationData in core.py
+- use self.u_pre_val (if not None) in RunturbESN to initialize reservoir state before validation phase (make it more comparable to test phase, which is also preceeded by state from GT data)
+- self.val_init_input is now taken from self.u_pre_val (if val_init_input is None and u_pre_val is not None)
+
+
+### 13.12.2022
+- argument seeds in create_hdf5_structure method in util.py can be int or list, range now
+- fixed wrong default mse shape in RunturbESN mehtod in util.py
+- renamed ComputeWassersteinDistance to compute_wasserstein_distance in util.py
+- renamed ComputeMSE to compute_mse in util.py
+- renamed ComputeR2 to compute_r2 in util.py
+- renamed RunturbESN to run_turbESN in util.py
+- renamed thread_RunturbESN to thread_run_turbESN in study.py
+- renamed setDevice to set_device in core.py
+- renamed toTorch to to_torch in core.py
+- added compute_nrmse method to util.py
+
+
+
+### 14.12.2022
+- changed computation of mse in run_turbESN to more generic way: user uses dict esn.loss_func to specify which loss functions should be computed, results are returned in loss_dict
+    - added None init. for esn.loss_func
+    - adapted save_study, read_study in util.py 
+    - adapted read in core.py
+    - renamed read_mse to read_loss in util.py
+    - adapted read_loss in util.py
+    - adapted thread_run_turbESN, callback_settings, callback_seeds in study.py
+    - adapted forward_validate_auto_ESN in util.py (not tested)
+
+- removed iseed argument in read_loss, read_study, read_esn_output in util.py
+- renamed _MSE_DEFAULT to _LOSS_DEFAULT in _modes.py
+- adpated basic_tour.ipynb notebook to new turbESN 

@@ -232,6 +232,10 @@
         "INFO":  "initial input step for the start of the validation phase, shape (1, n_input)",
         "SAVE_TO_HDF5": false},
 
+    "u_pre_val":{
+        "INFO":  "transient input before validation phase , shape (1, n_input)",
+        "SAVE_TO_HDF5": false},
+    
     "Win":{
             "INFO":  "Input weight matrix, shape (n_reservoir,1+n_input)",
             "SAVE_TO_HDF5": false},
