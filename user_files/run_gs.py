@@ -320,7 +320,7 @@ if __name__ == '__main__':
     print('\n ----------------------------------------')
     print('\n PROGRAM FINISHED!')
     print('\n ----------------------------------------')
-    print('\n Total elapsed time {0:.2f}s'.format(time_end-time_start))
+    print('\n Total elapsed time {0:.2f}min'.format((time_end-time_start)/60))
 
 #---------------------------------------------------------------------------------------------
 #                          END OF PROGRAM
