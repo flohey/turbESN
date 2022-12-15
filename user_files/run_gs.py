@@ -305,14 +305,14 @@ if __name__ == '__main__':
                 esn_copy = deepcopy(esn)
                 esn_copy.SetRandomSeed(seed)
                 esn_copy.SetID(esn_id)
-                pool.apply_async(parallelize_seeds, args = ((esn_copy, filepath_esn, MAX_THREADS, config, nsetting, study_tuple),), callback = callback_seeds)       
+                pool.apply_async(parallelize_seeds, args=((esn_copy, filepath_esn, MAX_THREADS, config, nsetting, study_tuple),), callback=callback_seeds)       
         else:
             print('Distributing settings over processes')
             for esn_id,isetting in enumerate(range(nsetting)):
                 esn_copy = deepcopy(esn)
                 setting = config[isetting]
                 esn_copy.SetID(esn_id)
-                pool.apply_async(parallelize_settings, args = ((esn_copy, filepath_esn, MAX_THREADS, setting, isetting, seeds, study_tuple),), callback = callback_seeds)
+                pool.apply_async(parallelize_settings, args=((esn_copy, filepath_esn, MAX_THREADS, setting, isetting, seeds, study_tuple),), callback=callback_settings(callback_args))
             
         pool.close()
         pool.join()

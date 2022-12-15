@@ -174,10 +174,10 @@
 - added plot_esn_predictions to util.py
 
 
-## Release 0.0.1.9.1.3
+## Release 0.0.1.9.2.0
 ----------------------
 - fixed minor issues in run_gs.py
-- changed syntac in verify_echo_state_property method in util.py
+- changed syntax in verify_echo_state_property method in util.py
 - fixed bug in plot_esn_predictions method in util.py
 
 ### 14.11.2022
