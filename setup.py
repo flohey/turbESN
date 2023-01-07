@@ -7,7 +7,7 @@ here = os.path.abspath(os.path.dirname(__file__))
 NAME = 'turbESN'
 VERSION = None
 AUTHOR = "flohey (Florian Heyder)"
-EMAIL = "<florian.heyder@tu-ilmenau.de>"
+EMAIL = "<florian.heyder@protonmail.com>"
 DESCRIPTION = 'An echo state network implementation.'
 LONG_DESCRIPTION = 'An echo state network implementation, used in my PhD research as part of the DeepTurb project of the Carl-Zeiss Stiftung.'
 

@@ -6,3 +6,6 @@
 - adapt SetStudyParameters method in core.py to a dict
 - add feedback bias
 - add advanced_tour notebook
+
+- substitute setters in core.py by HP_DICT
+    - add attribtue in hyperparameters.json: study: true/false

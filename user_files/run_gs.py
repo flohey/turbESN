@@ -25,8 +25,8 @@ import yaml
 #turbESN
 import turbESN
 from turbESN.util import (
-    PrepareTeacherData,  
-    PreparePredictorData, 
+    prepare_teacher_data,  
+    prepare_auto_data, 
     create_hdf5_groups, 
     init_random_search,
     init_grid_search,
@@ -57,7 +57,7 @@ if __name__ == '__main__':
     #----------------------------------------------------
     #1. Load ESN Config 
     #----------------------------------------------------
-    print("Reading yaml-config file.")
+    print("\nReading yaml-config file.\n")
 
     # case params
     #----------------------------
@@ -154,11 +154,11 @@ if __name__ == '__main__':
     #----------------------------------------------------
     #----------------------------------------------------        
     if not do_random_search:
-        print("Initializing grid search...\n")
+        print("Initializing grid search...")
         config, nsetting  = init_grid_search(study_tuple, study_param_limits, study_param_list)
         print('Seeds: {0}. Studies per seed: {1}\n'.format(nseed, nsetting))
     else:
-        print("Initializing random search...\n")
+        print("Initializing random search...")
         nsetting = yaml_config["nsetting"]
 
         config, nsetting = init_random_search(nsetting, study_tuple,limits=study_param_limits)
@@ -190,7 +190,7 @@ if __name__ == '__main__':
     data_out = data[:,:n_output]
     
     print(f"Using ESN in mode {mode}")
-    print(f"n_input = {n_input}, n_output = {n_output}")
+    print(f"n_input = {n_input}, n_output = {n_output}\n")
     # Data parameters
     #------------------
     esn_end   = esn_start + (trainingLength+testingLength+validationLength)
@@ -243,16 +243,16 @@ if __name__ == '__main__':
 
 
     if mode == "auto":
-        u_train, y_train, u_test, y_test, u_val, y_val = PreparePredictorData(  data=data_in_scaled,
-                                                                                n_input=n_input, 
-                                                                                trainingLength=trainingLength, 
-                                                                                testingLength=testingLength, 
-                                                                                esn_start=esn_start, 
-                                                                                esn_end=esn_end,
-                                                                                validationLength=validationLength)
+        u_train, y_train, u_test, y_test, u_val, y_val = prepare_auto_data( data=data_in_scaled,
+                                                                            n_input=n_input, 
+                                                                            trainingLength=trainingLength, 
+                                                                            testingLength=testingLength, 
+                                                                            esn_start=esn_start, 
+                                                                            esn_end=esn_end,
+                                                                            validationLength=validationLength)
 
     elif mode == "teacher":
-        u_train, y_train, u_test, y_test, u_val, y_val = PrepareTeacherData(  data_in=data_in_scaled,
+        u_train, y_train, u_test, y_test, u_val, y_val = prepare_teacher_data(  data_in=data_in_scaled,
                                                                                 data_out=data_out_scaled,
                                                                                 n_input=n_input, 
                                                                                 n_output=n_output,
@@ -275,19 +275,25 @@ if __name__ == '__main__':
     # - distribute different ESN settings among threads
     #----------------------------------------------------
     esn.to_torch()
-    esn.save(filepath_esn)
-    create_hdf5_groups(filepath_esn, nseed, nsetting)
+    if not os.path.exists(filepath_esn):
+        esn.save(filepath_esn)
+        
+    create_hdf5_groups(filepath_esn, seeds, nsetting)
 
     with h5py.File(filepath_esn,'a') as f:
-        f["Data"].create_dataset(name='x_min_in',data=x_min_in,compression='gzip',compression_opts=9)
-        f["Data"].create_dataset(name='x_max_in',data=x_max_in,compression='gzip',compression_opts=9)
-        f["Data"].create_dataset(name='x_min_out',data=x_min_out,compression='gzip',compression_opts=9)
-        f["Data"].create_dataset(name='x_max_out',data=x_max_out,compression='gzip',compression_opts=9)
+        if 'x_min_in' not in f['Data']:
+            f["Data"].create_dataset(name='x_min_in',data=x_min_in,compression='gzip',compression_opts=9)
+        if 'x_max_in' not in f['Data']:
+            f["Data"].create_dataset(name='x_max_in',data=x_max_in,compression='gzip',compression_opts=9)
+        if 'x_min_out' not in f['Data']:
+            f["Data"].create_dataset(name='x_min_out',data=x_min_out,compression='gzip',compression_opts=9)
+        if 'x_max_out' not in f['Data']:
+            f["Data"].create_dataset(name='x_max_out',data=x_max_out,compression='gzip',compression_opts=9)
 
     # Check echo state property
     esn.createWeightMatrices()
     estimated_transientTime = esn.verify_echo_state_property(u=u_train,y=y_train)
-    print("Estimated transientTime = {0}".format(estimated_transientTime))
+    print("Estimated transientTime = {0}\n".format(estimated_transientTime))
 
     # Print ESN info
     print(esn)
@@ -300,14 +306,14 @@ if __name__ == '__main__':
     
         # parallelize RNG seed
         if not use_parallel_setting:
-            print('Distributing seeds over processes')
+            print('Distributing seeds over processes\n')
             for esn_id,seed in enumerate(seeds):
                 esn_copy = deepcopy(esn)
                 esn_copy.SetRandomSeed(seed)
                 esn_copy.SetID(esn_id)
                 pool.apply_async(parallelize_seeds, args=((esn_copy, filepath_esn, MAX_THREADS, config, nsetting, study_tuple),), callback=callback_seeds)       
         else:
-            print('Distributing settings over processes')
+            print('Distributing settings over processes\n')
             for esn_id,isetting in enumerate(range(nsetting)):
                 esn_copy = deepcopy(esn)
                 setting = config[isetting]
@@ -317,10 +323,10 @@ if __name__ == '__main__':
         pool.close()
         pool.join()
     time_end = time.time()
-    print('\n ----------------------------------------')
-    print('\n PROGRAM FINISHED!')
-    print('\n ----------------------------------------')
-    print('\n Total elapsed time {0:.2f}min'.format((time_end-time_start)/60))
+    print('----------------------------------------\n')
+    print('PROGRAM FINISHED!')
+    print('(total elapsed time {0:.2f}min)\n'.format((time_end-time_start)/60))
+    print('----------------------------------------')
 
 #---------------------------------------------------------------------------------------------
 #                          END OF PROGRAM

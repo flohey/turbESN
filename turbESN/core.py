@@ -1,5 +1,5 @@
 #turbESN
-from ._modes import (_DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT, _FIT_METHODS)
+from ._modes import (_DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _FIT_METHODS)
 
 import torch
 import numpy as np
@@ -9,13 +9,19 @@ import h5py
 import json
 from typing import Union, Tuple, List
 import logging
+import logging.config
 
 # Read hyperparameter.json
 import importlib.resources as pkg_resources
 with pkg_resources.path(__package__,'hyperparameters.json') as hp_dict_path:
     with open(hp_dict_path,'r') as f:
-        HP_dict = json.load(f)  
+        HP_dict = json.load(f) 
+with pkg_resources.path(__package__,'logging_config.json') as logging_config_path:
+    with open(logging_config_path,'r') as f:
+        LOGGING_CONFIG = json.load(f)
 
+logging.config.dictConfig(LOGGING_CONFIG)
+logger = logging.getLogger('turbESNlogger')
 
 class ESN:
 
@@ -52,19 +58,14 @@ class ESN:
                 fit_method: str = "tikhonov",
                 verbose: bool = False):
 
+        if verbose:
+            logger.setLevel('DEBUG')
 
         self.device = _DEVICE
 
-        if verbose:
-            self.logging_level = logging.DEBUG
-        else:
-            self.logging_level = logging.WARNING
-
-        logging.basicConfig(format=_LOGGING_FORMAT, level= self.logging_level)
-        
         assert mode in _ESN_MODES,'Error: unkown mode {0}. Choices {1}'.format(mode, _ESN_MODES)
         self.mode = mode                                             # prediction mode (auto - autonmous prediction, teacher - teacher forced)
-        logging.info('ESN mode is ' + self.mode + '\n')
+        logger.info('ESN mode is ' + self.mode + '\n')
 
         assert extendedStateStyle in _EXTENDED_STATE_STYLES,'Error: unkown extended state style {0}. Choices {1}'.format(extendedStateStyle, _EXTENDED_STATE_STYLES)
         self.extendedStateStyle = extendedStateStyle        
@@ -150,7 +151,7 @@ class ESN:
         Random initialization of the input weights. The weights are drawn from U[-0.5,0.5] or N[0,1] and subsequently scaled by inputScaling.
         '''
         
-        logging.debug('Building input matrix')
+        logger.debug('Building input matrix')
 
         if self.weightGeneration == 'normal':
             self.Win = torch.randn(self.n_reservoir, 1 + self.n_input, device = self.device, dtype = _DTYPE)
@@ -173,7 +174,7 @@ class ESN:
         if np.isscalar(self.inputScaling):
             _inputScaling = torch.ones(self.n_input, device = self.device, dtype = _DTYPE) * self.inputScaling 
         elif len(self.inputScaling) != self.n_input:
-            logging.critical(' inputScaling dimension ({0}) does not match input dimension ({1})\n'.format(len(self.inputScaling), self.n_input))
+            logger.critical(' inputScaling dimension ({0}) does not match input dimension ({1})\n'.format(len(self.inputScaling), self.n_input))
             raise RuntimeError
         else:
             _inputScaling = self.inputScaling
@@ -189,7 +190,7 @@ class ESN:
         Finally, the largest absolute eigenvalue is computed, by which Wres is normalized. Then Wres is scaled by the spectral radius.
         '''
             
-        logging.debug('Building reservoir matrix')
+        logger.debug('Building reservoir matrix')
 
         if self.weightGeneration == 'normal':
             self.Wres = torch.as_tensor(torch.randn(self.n_reservoir, self.n_reservoir, dtype = _DTYPE, device = self.device) , dtype = _DTYPE, device = self.device)
@@ -212,7 +213,7 @@ class ESN:
         '''
         Random initialization of feedback weights. The weights are drawn from U[-0.5,0.5] or N[0,1] and subsequently scaled by feedbackScaling.
         '''
-        logging.debug('Building feedback matrix')
+        logger.debug('Building feedback matrix')
 
         if self.weightGeneration == 'normal':
             self.Wfb = torch.randn(self.n_reservoir, self.n_output, device = self.device, dtype = _DTYPE)
@@ -229,7 +230,7 @@ class ESN:
             _feedbackScaling = torch.ones(self.n_output, device = self.device, dtype = _DTYPE) * self.feedbackScaling 
 
         elif len(self.feedbackScaling) != self.n_output:
-            logging.critical(' feedbackScaling dimension ({0}) does not match output dimension ({1})\n'.format(len(self.feedbackScaling), self.n_output))
+            logger.critical(' feedbackScaling dimension ({0}) does not match output dimension ({1})\n'.format(len(self.feedbackScaling), self.n_output))
             raise RuntimeError
         else:
             _feedbackScaling = self.feedbackScaling
@@ -248,7 +249,7 @@ class ESN:
             self.createFeebackMatrix()
 
 #--------------------------------------------------------------------------
-    def calculateLinearNetworkTransmissions(self, u: torch.Tensor, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    def calculate_activation_argument(self, u: torch.Tensor, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         ''' 
         Computes input and state contributions to the activation function.
         
@@ -280,7 +281,7 @@ class ESN:
             y - last reservoir output
         '''
 
-        transmission = self.calculateLinearNetworkTransmissions(u=u,x=x,y=y)
+        transmission = self.calculate_activation_argument(u=u,x=x,y=y)
 
         x *= (1.0 - self.leakingRate)
 
@@ -307,19 +308,19 @@ class ESN:
         '''
         #TO DO: dirty fix for logger in prediction phase
         if transientTime != 0:
-            logging.debug('Propagating states')
+            logger.debug('Propagating states')
 
 
         if u is None:
-            logging.critical('No reservoir input for propagation has been provided!\n')
+            logger.critical('No reservoir input for propagation has been provided!\n')
             raise RuntimeError
 
         if self.use_feedback:
             if y is None:
-                logging.critical(' Feedback: last output must be provided for state propagation \n')
+                logger.critical(' Feedback: last output must be provided for state propagation \n')
                 raise RuntimeError
             if y.shape[0] != u.shape[0]:
-                logging.critical(' Feedback: provided output time dimension ({0}) does not match input time dimension ({1}) \n'.format(y.shape[0],u.shape[0]))
+                logger.critical(' Feedback: provided output time dimension ({0}) does not match input time dimension ({1}) \n'.format(y.shape[0],u.shape[0]))
                 raise RuntimeError            
 
 
@@ -411,7 +412,7 @@ class ESN:
                     self.update(u[it], x_init[ii])
                     
         
-        logging.warn('Reservoir states did not converge.')
+        logger.warn('Reservoir states did not converge.')
         return torch.inf
 #--------------------------------------------------------------------------
     def fit(self, X: torch.Tensor, y: torch.Tensor):
@@ -423,7 +424,7 @@ class ESN:
             y - target training output
         '''
 
-        logging.debug('Fitting output matrix')
+        logger.debug('Fitting output matrix')
         assert X.shape[1] == y.shape[0], "Time dimension of X ({0}) does not match time dimension of y ({1}).\nDid you forget to exclude the transientTime of y? ".format(X.shape[1], y.shape[0])
         
         if self.fit_method == "tikhonov":
@@ -469,11 +470,11 @@ class ESN:
             x_pred - reservoir state matrix (prediction phase)
         '''
 
-        logging.debug('Predicting output')
+        logger.debug('Predicting output')
 
         if init_input is None:
             if self.test_init_input is None:
-                logging.error('Error in predict: Initial prediction input is not defined! Returning default values for (y_pred, x_pred).')
+                logger.error('Error in predict: Initial prediction input is not defined! Returning default values for (y_pred, x_pred).')
                 return torch.zeros((testingLength, self.n_output)), torch.zeros((self.xrows, testingLength))
             else:
                 init_input = self.test_init_input
@@ -523,7 +524,7 @@ class ESN:
             x_pred - reservoir state matrix (prediction phase)
         '''
         
-        logging.debug('Predicting output')
+        logger.debug('Predicting output')
             
         y_pred = torch.zeros((self.n_output,testingLength), device = self.device, dtype = _DTYPE) 
         x_pred = torch.zeros((self.xrows, testingLength), device = self.device, dtype = _DTYPE)
@@ -572,7 +573,7 @@ class ESN:
             x_pred - reservoir state matrix (prediction phase)
         '''
         
-        logging.debug('Predicting output')
+        logger.debug('Predicting output')
 
         y_pred = torch.zeros([self.n_output,testingLength], device = self.device, dtype = _DTYPE) 
         x_pred = torch.zeros([self.xrows, testingLength], device = self.device, dtype = _DTYPE)
@@ -646,7 +647,7 @@ class ESN:
 
             if self.y_train is not None and test_init_input is None:
                 #Initial input is last training input. Then first prediction aligns with the first entry of y_test
-                logging.debug('Initial testing input not specified. Using last target training output.')
+                logger.debug('Initial testing input not specified. Using last target training output.')
                 self.test_init_input = self.y_train[-1:,:]    #initial input the trained ESN receives for the beginning of the testing phase
            
             elif test_init_input is not None:
@@ -693,32 +694,26 @@ class ESN:
         if self.mode == _ESN_MODES[0]:
             if val_init_input is None:
                 #Initial input is last testing input. Then first prediction aligns with the first entry of y_val
-                logging.debug('Initial validation input not specified. Using last target test output.')
+                logger.debug('Initial validation input not specified. Using last target test output.')
                 self.val_init_input = self.y_test[-1:,:]    #initial input the trained ESN receives for the beginning of the validation phase
             else:
                 self.val_init_input = val_init_input
 
-    #--------------------------------------------------------------------------
-    #FH 14/11/2021: Added logging 
-    def SetLoggingLevel(self, logging_level):
-    
-        logging.warn(f'Setting logging level to {logging_level}')
-        logging.getLogger().setLevel(logging_level)
     
     #--------------------------------------------------------------------------
     def SetID(self, esn_id):
     
-        logging.debug(f'Setting reservoir ID to {esn_id}')
+        logger.debug(f'Setting reservoir ID to {esn_id}')
         self.id = esn_id
 
     #--------------------------------------------------------------------------
     def SetNInputOutput(self,n_input: int, n_output: int = None, study_dict: dict = {}):
         
-        logging.debug(f'Setting n_input {n_input}')
+        logger.debug(f'Setting n_input {n_input}')
 
         self.n_input = n_input
         if n_output is not None:
-            logging.debug(f'Setting n_output {n_output}')
+            logger.debug(f'Setting n_output {n_output}')
             self.n_output = n_output
         else:
             self.n_output = self.n_input 
@@ -731,7 +726,7 @@ class ESN:
      #--------------------------------------------------------------------------
     def SetNReservoir(self,n_reservoir: int, study_dict: dict = {}):
 
-        logging.debug(f'Setting n_reservoir {n_reservoir}')
+        logger.debug(f'Setting n_reservoir {n_reservoir}')
         
         self.n_reservoir = n_reservoir
 
@@ -746,89 +741,89 @@ class ESN:
     #--------------------------------------------------------------------------
     def SetSpectralRadius(self, spectralRadius: float, study_dict: dict = {}):
         
-        logging.debug(f'Setting spectralRadius {spectralRadius}')
+        logger.debug(f'Setting spectralRadius {spectralRadius}')
         
         self.spectralRadius = spectralRadius
         study_dict['spectralRadius'] = spectralRadius
     #--------------------------------------------------------------------------
     def SetReservoirDensity(self, reservoirDensity: float, study_dict: dict = {}):
         
-        logging.debug(f'Setting reservoirDensity {reservoirDensity}')
+        logger.debug(f'Setting reservoirDensity {reservoirDensity}')
         self.reservoirDensity = reservoirDensity
         study_dict['reservoirDensity'] = reservoirDensity
     #--------------------------------------------------------------------------
     def SetLeakingRate(self, leakingRate: float, study_dict: dict = {}):
        
-        logging.debug(f'Setting leakingRate {leakingRate}')
+        logger.debug(f'Setting leakingRate {leakingRate}')
         self.leakingRate = leakingRate
         study_dict['leakingRate'] = leakingRate
     #--------------------------------------------------------------------------
     def SetRegressionParameter(self, regressionParameter: float, study_dict: dict = {}):
         
-        logging.debug(f'Setting regressionParameter {regressionParameter}')
+        logger.debug(f'Setting regressionParameter {regressionParameter}')
         self.regressionParameter = regressionParameter
         study_dict['regressionParameter'] = regressionParameter
     #--------------------------------------------------------------------------
     def SetBiasIn(self, bias_in: float, study_dict: dict = {}):
 
-        logging.debug(f'Setting bias_in {bias_in}')
+        logger.debug(f'Setting bias_in {bias_in}')
         self.bias_in = bias_in
         study_dict['bias_in'] = bias_in
     #--------------------------------------------------------------------------
     def SetBiasOut(self, bias_out: float, study_dict: dict = {}):
 
-        logging.debug(f'Setting bias_out {bias_out}')
+        logger.debug(f'Setting bias_out {bias_out}')
         self.bias_out = bias_out
         study_dict['bias_out'] = bias_out
     #--------------------------------------------------------------------------
     def SetOutputInputScaling(self, outputInputScaling: float, study_dict: dict = {}):
         
-        logging.debug(f'Setting outputInputScaling {outputInputScaling}')
+        logger.debug(f'Setting outputInputScaling {outputInputScaling}')
         self.outputInputScaling = outputInputScaling
         study_dict['outputInputScaling'] = outputInputScaling
     #--------------------------------------------------------------------------
     def SetInputScaling(self, inputScaling: float, study_dict: dict = {}):
         
-        logging.debug(f'Setting inputScaling {inputScaling}')
+        logger.debug(f'Setting inputScaling {inputScaling}')
         self.inputScaling = inputScaling
         study_dict['inputScaling'] = inputScaling
     #--------------------------------------------------------------------------
     def SetFeedbackScaling(self, feedbackScaling: float, study_dict: dict = {}):
         
-        logging.debug(f'Setting feedbackScaling {feedbackScaling}')
+        logger.debug(f'Setting feedbackScaling {feedbackScaling}')
         self.feedbackScaling = feedbackScaling
         study_dict['feedbackScaling'] = feedbackScaling
     
     #--------------------------------------------------------------------------
     def SetInputDensity(self, inputDensity: float, study_dict: dict = {}):
         
-        logging.debug(f'Setting inputDensity {inputDensity}')
+        logger.debug(f'Setting inputDensity {inputDensity}')
         self.inputDensity = inputDensity
         study_dict['inputDensity'] = inputDensity
     #--------------------------------------------------------------------------
     def SetNoiseLevelIn(self, noiseLevel_in: float, study_dict: dict = {}):
         
-        logging.debug(f'Setting noiseLevel_in {noiseLevel_in}')
+        logger.debug(f'Setting noiseLevel_in {noiseLevel_in}')
         self.noiseLevel_in = noiseLevel_in
         study_dict["noiseLevel_in"] = noiseLevel_in
     #--------------------------------------------------------------------------
     def SetNoiseLevelOut(self, noiseLevel_out: float, study_dict: dict = {}):
         
-        logging.debug(f'Setting noiseLevel_out {noiseLeve_out}')
+        logger.debug(f'Setting noiseLevel_out {noiseLeve_out}')
         self.noiseLevel_out = noiseLevel_out
         study_dict["noiseLevel_out"] = noiseLevel_out
 
     #--------------------------------------------------------------------------
     def SetTransientTime(self, transientTime: int, study_dict: dict = {}):
         
-        logging.debug(f'Setting transientTime {transientTime}')
+        logger.debug(f'Setting transientTime {transientTime}')
         self.transientTime = transientTime
         study_dict["transientTime"] = transientTime
 
     #--------------------------------------------------------------------------
     def SetDataScaling(self, dataScaling: float, study_dict: dict = {}):
         
-        logging.debug(f'Setting dataScaling {dataScaling}')
+        logger.debug(f'Setting dataScaling {dataScaling}')
         self.u_train *=dataScaling
         self.y_train *=dataScaling
         if self.u_test is not None:
@@ -839,7 +834,7 @@ class ESN:
     #FH 21/03/2021: added Seed Setter method
     def SetRandomSeed(self, randomSeed: int):
         
-        logging.debug(f'Setting randomSeed {randomSeed}')
+        logger.debug(f'Setting randomSeed {randomSeed}')
         self.randomSeed = randomSeed
 
         # TO DO: 
@@ -919,7 +914,7 @@ class ESN:
                 self.SetTransientTime(config_istudy[iparam], study_dict)
 
             else:
-                logging.critical('Specified parameter {0} unknown.'.format(parameter))
+                logger.critical('Specified parameter {0} unknown.'.format(parameter))
                 raise KeyError
                 
         return study_dict
@@ -935,7 +930,7 @@ class ESN:
         This will stop numpy vs. torch clashes from happening.
         '''
         
-        logging.debug('Moving class arrays to {0} with dtype {1}'.format(self.device, _DTYPE))
+        logger.debug('Moving class arrays to {0} with dtype {1}'.format(self.device, _DTYPE))
 
         allmembers = [m for m in dir(self) if m[:2] != '__' and m[-2:] != '__']
         ifaddmember = [not callable(getattr(self, name)) for name in allmembers ]
@@ -968,7 +963,7 @@ class ESN:
     def set_device(self, device: str):
         ''' Set globael ESN device (cpu or cuda)'''
         
-        logging.debug('Setting device: {0}'.format(device))
+        logger.debug('Setting device: {0}'.format(device))
         self.device = device
         
 #---------------------------------------------------------------------------
@@ -992,6 +987,12 @@ class ESN:
             else:
                 continue
 
+        # reservoir state matrices
+        nbytes_single = torch.tensor(1.).to(_DTYPE).element_size()
+        obj_size += ((self.trainingLength-self.transientTime)*self.xrows*nbytes_single)/1e6
+        obj_size += (self.testingLength*self.xrows*nbytes_single)/1e6
+        obj_size += (self.validationLength*self.xrows*nbytes_single)/1e6
+        
         return obj_size
 
 #---------------------------------------------------------------------------
@@ -1003,7 +1004,7 @@ class ESN:
         '''
         
         to_close = False
-        logging.warn('Saving ESN parameters to Hdf5 file {0}'.format(filepath))
+        logger.warn('Saving ESN parameters to Hdf5 file {0}'.format(filepath))
 
         hdf5_attrs_save = (float,int,bool,list,str)
         hdf5_array_save = (np.ndarray,torch.Tensor)
@@ -1013,8 +1014,16 @@ class ESN:
             to_close = True
 
         # Save Hyperparameters & Data sets
-        G_hp = f.create_group('Hyperparameters')
-        G_data = f.create_group('Data')
+        if 'Hyperparameters' in f:
+            G_hp = f['Hyperparameters']
+        else:
+            G_hp = f.create_group('Hyperparameters')
+
+        if 'Data' in f:
+            G_data = f['Data']
+        else:
+            G_data = f.create_group('Data')
+
         for key in HP_dict.keys():
             try:
                 attr = getattr(self,key)
@@ -1024,9 +1033,13 @@ class ESN:
                         G_hp.attrs[key]= attr
                     elif isinstance(attr,hdf5_array_save):
                         if key == "leakingRate":
+                            if key in G_hp:
+                                del G_hp[key]
                             G_hp.create_dataset(key,  data = attr, compression = 'gzip', compression_opts = 9)
                         else:
-                            G_data.create_dataset(key, data = attr, compression = 'gzip', compression_opts = 9)
+                            if key in G_data:
+                                del G_data[key]
+                            G_data.create_dataset(key,  data = attr, compression = 'gzip', compression_opts = 9)
                     else:
                         G_hp.attrs[key]= False
             except AttributeError:
@@ -1056,46 +1069,46 @@ class ESN:
         else:
             repr += "randomSeed = None\n"
             
-        repr += "n_input"+ " = {0:.0f}\n".format(self.n_input)
-        repr += "n_output"+ " = {0:.0f}\n".format(self.n_output)
+        repr += "n_input = {0:.0f}\n".format(self.n_input)
+        repr += "n_output = {0:.0f}\n".format(self.n_output)
         
-        repr += "n_reservoir" + " = {0:.0f}\n".format(self.n_reservoir)
+        repr += "n_reservoir = {0:.0f}\n".format(self.n_reservoir)
         repr += "reservoir density = {0:.3f}\n".format(self.reservoirDensity)
-        repr += "spectral radius = " + "{0:.3f}\n".format(self.spectralRadius)
+        repr += "spectral radius = {0:.3f}\n".format(self.spectralRadius)
 
         if np.isscalar(self.leakingRate):
-            repr += "leaking rate = "+"{0:.3f}\n".format(self.leakingRate)
+            repr += "leaking rate = {0:.3f}\n".format(self.leakingRate)
         else:
             repr += "leaking rate is array\n"
         
-        repr += "regression parameter = "+"{0:.2e}\n".format(self.regressionParameter)
+        repr += "regression parameter = {0:.2e}\n".format(self.regressionParameter)
         
-        repr += "training length = " + "{0:.0f}\n".format(self.trainingLength)
-        repr += "testing length = " + "{0:.0f}\n".format(self.testingLength)
-        repr += "validation length = " + "{0:.0f}\n".format(self.validationLength)
-        repr += "esn start = " + "{0:.0f}\n".format(self.esn_start)
-        repr += "esn end = " + "{0:.0f}\n".format(self.esn_end)
-        repr += "data length = " + "{0:.0f}\n".format(self.data_timesteps)
+        repr += "training length = {0:.0f}\n".format(self.trainingLength)
+        repr += "testing length = {0:.0f}\n".format(self.testingLength)
+        repr += "validation length = {0:.0f}\n".format(self.validationLength)
+        repr += "esn start = {0:.0f}\n".format(self.esn_start)
+        repr += "esn end = {0:.0f}\n".format(self.esn_end)
+        repr += "data length = {0:.0f}\n".format(self.data_timesteps)
 
-        repr += "input bias = " + "{0:.0f}\n".format(self.bias_in)
-        repr += "output bias = " + "{0:.0f}\n".format(self.bias_out)
+        repr += "input bias = {0:.0f}\n".format(self.bias_in)
+        repr += "output bias = {0:.0f}\n".format(self.bias_out)
 
         if np.isscalar(self.inputScaling):
-            repr += "input scaling = " + "{0:.0f}\n".format(self.inputScaling)
+            repr += "input scaling = {0:.0f}\n".format(self.inputScaling)
         else:
             repr += "input scaling is array\n"
 
         if np.isscalar(self.feedbackScaling):
-            repr += "feedback scaling = " + "{0:.0f}\n".format(self.feedbackScaling)
+            repr += "feedback scaling = {0:.0f}\n".format(self.feedbackScaling)
         else:
             repr += "feedback scaling is array\n"
 
-        repr += "output input scaling = " + "{0:.0f}\n".format(self.outputInputScaling)
+        repr += "output input scaling = {0:.0f}\n".format(self.outputInputScaling)
         
-        repr += "noise level inside activation function = " + "{0:.2e}\n".format(self.noiseLevel_in)
-        repr += "noise level outside activation function = " + "{0:.2e}\n".format(self.noiseLevel_out)
+        repr += "noise level inside activation function = {0:.2e}\n".format(self.noiseLevel_in)
+        repr += "noise level outside activation function = {0:.2e}\n".format(self.noiseLevel_out)
 
-        repr += "transientTime = " + "{0}\n".format(self.transientTime)
+        repr += "transientTime = {0}\n".format(self.transientTime)
 
         repr += "weight dist. = "+self.weightGeneration+"\n"
         repr += "use feedback weights: "+str(self.use_feedback)+"\n"
@@ -1121,7 +1134,7 @@ class ESN:
         '''
 
         to_close = False
-        logging.warn('Reading ESN parameters from Hdf5 file {0}'.format(filepath))
+        logger.warn('Reading ESN parameters from Hdf5 file {0}'.format(filepath))
 
         esn = ESN.vanilla_esn()
 
@@ -1130,7 +1143,7 @@ class ESN:
                 f = h5py.File(filepath, 'r')
                 to_close = True  
             except FileNotFoundError:
-                logging.debug('Error: file {0} not found.'.format(filepath))
+                logger.debug('Error: file {0} not found.'.format(filepath))
                 return None
 
         # Read Hyperparameters
@@ -1158,10 +1171,10 @@ class ESN:
 
 
         # Read loss_func
-        try:
-            esn.loss_func = list(G_data.attrs['loss_func'])
-        except KeyError:
-            esn.loss_func = None
+        #try:
+        #    esn.loss_func = list(G_data.attrs['loss_func'])
+        #except KeyError:
+        #    esn.loss_func = None
             
         # Set Training/Testing/Validation data
         if esn.u_train is not None and esn.y_train is not None:

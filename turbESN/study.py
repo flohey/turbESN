@@ -10,7 +10,7 @@ from .util import (
 
 from .core import ESN
 from .cross_validation import CrossValidation
-from ._modes import (_DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _LOGGING_FORMAT, _ID_PRINT)
+from ._modes import (_DTYPE, _DEVICE, _ESN_MODES, _WEIGTH_GENERATION, _EXTENDED_STATE_STYLES, _ID_PRINT)
 
 #Parallelization
 import multiprocessing as mp
@@ -23,6 +23,7 @@ import time
 from copy import deepcopy
 from typing import Union, Tuple, List
 import logging
+import logging.config
 
 #Backends
 import numpy as np
@@ -37,7 +38,12 @@ import importlib.resources as pkg_resources
 with pkg_resources.path(__package__,'hyperparameters.json') as hp_dict_path:
     with open(hp_dict_path,'r') as f:
         HP_dict = json.load(f)   
+with pkg_resources.path(__package__,'logging_config.json') as logging_config_path:
+    with open(logging_config_path,'r') as f:
+        LOGGING_CONFIG = json.load(f)
 
+logging.config.dictConfig(LOGGING_CONFIG)
+logger = logging.getLogger('turbESNlogger')
 #--------------------------------------------------------------------------------------------------------
 def thread_run_turbESN(thread_args) -> Tuple[int,np.ndarray,np.ndarray,np.ndarray,np.ndarray,np.ndarray,dict]:
     ''' Runs an ESN with given esn.
@@ -67,10 +73,10 @@ def thread_run_turbESN(thread_args) -> Tuple[int,np.ndarray,np.ndarray,np.ndarra
     loss_dict, y_pred_test, y_pred_val = run_turbESN(esn,
                                                     recompute_Win=recompute_Win,
                                                     recompute_Wres=recompute_Wres,
-                                                    recompute_Wfb=recompute_Wfb)    
+                                                    recompute_Wfb=recompute_Wfb)
 
     if esn.id % _ID_PRINT == 0: 
-        logging.warn("ID {0}: study {1}/{2} done.".format(esn.id, istudy+1, nstudy))
+        logger.warn("ID {0}: study {1}/{2} done.".format(esn.id, istudy+1, nstudy))
 
     return (istudy, loss_dict, y_pred_test, y_pred_val, study_dict)
 #-------------------------------------------------------------------------------------------------------- 
@@ -97,7 +103,7 @@ def parallelize_seeds(launch_thread_args) -> Tuple[int, list, int, str]:
     esn, filepath_esn, MAX_THREADS, config, nsetting, study_tuple = launch_thread_args
 
     study_results = []
-    logging.warn('Subprocess {0} starting.'.format(esn.id))
+    logger.warn('Subprocess {0} starting.'.format(esn.id))
     
     #----------------------------------
     #Set Seed
@@ -148,7 +154,7 @@ def parallelize_seeds(launch_thread_args) -> Tuple[int, list, int, str]:
             study_counter += num_threads
 
    
-    logging.warn('ID {0} all done.'.format(esn.id))
+    logger.warn('ID {0} all done.'.format(esn.id))
     
     #----------------------------------
     #Reshape result list
@@ -173,22 +179,21 @@ def callback_seeds(callback_args):
     esn_id, randomSeed, study_results, nsetting, filepath_esn = callback_args
 
     if esn_id % _ID_PRINT == 0:
-        logging.debug('ID {0}: returning to main process for saving.'.format(esn_id))
+        logger.debug('ID {0}: returning to main process for saving.'.format(esn_id))
 
     for ii in range(nsetting):
         isetting, loss_dict, y_pred_test, y_pred_val, study_dict= study_results[ii] 
 
         save_study(filepath=filepath_esn, 
-                   iseed=esn_id, 
+                   randomSeed=randomSeed, 
                    isetting=isetting,  
                    study_dict=study_dict, 
                    y_pred_test=y_pred_test, 
                    y_pred_val=y_pred_val, 
-                   loss_dict=loss_dict,
-                   randomSeed=randomSeed) 
+                   loss_dict=loss_dict) 
         
     if esn_id % _ID_PRINT == 0:        
-        logging.warn('Saved study for ID {0}.'.format(esn_id))
+        logger.warn('Saved study for ID {0}.'.format(esn_id))
 
 #--------------------------------------------------------------------------------------------------------
 def parallelize_settings(launch_thread_args) -> Tuple[int, list, int, str]:
@@ -212,10 +217,10 @@ def parallelize_settings(launch_thread_args) -> Tuple[int, list, int, str]:
     '''
 
     esn, filepath_esn, MAX_THREADS, config_isetting, isetting, seeds, study_tuple = launch_thread_args
-
+ 
     nseed = len(seeds)
     study_results = []
-    logging.warn('Subprocess {0} starting.'.format(esn.id))        
+    logger.warn('Subprocess {0} starting.'.format(esn.id))        
 
     #-----------------------------------------------
     # Weights must be recomputed for differnt seeds
@@ -251,12 +256,11 @@ def parallelize_settings(launch_thread_args) -> Tuple[int, list, int, str]:
             study_counter += num_threads
 
    
-    logging.warn('ID {0} all done.'.format(esn.id))
+    logger.warn('ID {0} all done.'.format(esn.id))
     
     #----------------------------------
     #Reshape result list
     #----------------------------------
-    
     study_results = [result for chunks in study_results for result in chunks]   
 
     return (esn.id, study_results, seeds, filepath_esn)
@@ -276,25 +280,23 @@ def callback_settings(callback_args):
     
     esn_id, study_results, seeds, filepath_esn = callback_args
 
-    nseed = len(seeds)
 
     if esn_id % _ID_PRINT == 0:
-        logging.debug('ID {0}: returning to main process for saving.'.format(esn_id))
+        logger.debug('ID {0}: returning to main process for saving.'.format(esn_id))
 
-    for ii,seed in enumerate(seeds):
+    for ii,randomSeed in enumerate(seeds):
         iseed, loss_dict, y_pred_test, y_pred_val, study_dict= study_results[ii] 
 
         save_study(filepath=filepath_esn, 
-                   iseed=iseed, 
+                   randomSeed=randomSeed, 
                    isetting=esn_id,
                    study_dict=study_dict, 
                    y_pred_test=y_pred_test, 
                    y_pred_val=y_pred_val, 
-                   loss_dict=loss_dict,
-                   randomSeed=seed) 
+                   loss_dict=loss_dict) 
         
     if esn_id % _ID_PRINT == 0:        
-        logging.warn('Saved study for ID {0}.'.format(esn_id))
+        logger.warn('Saved study for ID {0}.'.format(esn_id))
 
 #--------------------------------------------------------------------------------------------------------
 
@@ -329,7 +331,7 @@ def launch_thread_forward_validate_turbESN(thread_args):
     mse_train, mse_test, mse_val, y_pred_test, y_pred_val = forward_validate_auto_ESN(esn, cv)
 
     if esn.id % _ID_PRINT == 0: 
-        logging.warn("ID {0}: study {1}/{2} done.".format(esn.id, istudy+1, nstudy))
+        logger.warn("ID {0}: study {1}/{2} done.".format(esn.id, istudy+1, nstudy))
 
     return (istudy, mse_train.numpy(), mse_test.numpy(), mse_val.numpy(), y_pred_test.numpy(), y_pred_val.numpy(), study_dict)
 #--------------------------------------------------------------------------------------------------------
@@ -357,7 +359,7 @@ def launch_process_forward_validate_turbESN(launch_thread_args) -> Tuple[int, li
     esn, cv, filepath_esn, MAX_THREADS, config, nstudy, study_tuple = launch_thread_args
 
     study_results = []
-    logging.warn('Subprocess {0} starting.'.format(esn.id))
+    logger.warn('Subprocess {0} starting.'.format(esn.id))
     
     #----------------------------------
     #Set Seed
@@ -386,7 +388,7 @@ def launch_process_forward_validate_turbESN(launch_thread_args) -> Tuple[int, li
             study_counter += num_threads
 
    
-    logging.warn('ID {0} all done.'.format(esn.id))
+    logger.warn('ID {0} all done.'.format(esn.id))
     
     #----------------------------------
     #Reshape result list
@@ -416,7 +418,7 @@ def callback_seeds_postprocess(callback_args):
     esn_id, randomSeed, study_results, nsetting, filepath_esn = callback_args
 
     if esn_id % _ID_PRINT == 0:
-        logging.debug('ID {0}: returning to main process for post-processing & saving.'.format(esn_id))
+        logger.debug('ID {0}: returning to main process for post-processing & saving.'.format(esn_id))
 
     for ii in range(nsetting):
         isetting, mse_train, mse_test, mse_val, y_pred_test, y_pred_val, study_dict= study_results[ii] 
@@ -432,6 +434,6 @@ def callback_seeds_postprocess(callback_args):
                   mse_train=mse_train, mse_test=mse_test, mse_val=mse_val,randomSeed=randomSeed) #error_dict
         
     if esn_id % _ID_PRINT == 0:        
-        logging.warn('Saved study for ID {0}.'.format(esn_id))
+        logger.warn('Saved study for ID {0}.'.format(esn_id))
 
 #--------------------------------------------------------------------------------------------------------

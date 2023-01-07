@@ -1,0 +1,22 @@
+{
+    "version": 1,
+    "disable_existing_loggers": false,
+    "formatters": {
+        "default_formatter": {
+            "format": "%(asctime)s %(threadName)s %(levelname)s: %(message)s"
+        }
+    },
+    "handlers": {
+        "stream_handler": {
+            "class": "logging.StreamHandler",
+            "formatter": "default_formatter"
+        }
+    },
+    "loggers": {
+        "turbESNlogger": {
+            "handlers": ["stream_handler"],
+            "level": "WARNING",
+            "propagate": true
+        }
+    }
+}

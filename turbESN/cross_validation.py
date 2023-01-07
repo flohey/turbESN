@@ -1,6 +1,6 @@
 #turbESN
 from .core import ESN
-from ._modes import (_DTYPE, _DEVICE, _LOGGING_FORMAT)
+from ._modes import (_DTYPE, _DEVICE)
 
 #Backends
 import torch
@@ -9,9 +9,20 @@ import numpy as np
 #Misc. 
 from typing import Union, Tuple, List
 import logging
+import logging.config
 
 #Data structure
+import json
 import h5py
+
+
+import importlib.resources as pkg_resources
+with pkg_resources.path(__package__,'logging_config.json') as logging_config_path:
+    with open(logging_config_path,'r') as f:
+        LOGGING_CONFIG = json.load(f)
+
+logging.config.dictConfig(LOGGING_CONFIG)
+logger = logging.getLogger('turbESNlogger')
 
 class CrossValidation():
 
@@ -24,8 +35,6 @@ class CrossValidation():
                     n_validation_folds: int=1,
                     data: torch.Tensor = None):
 
-        logging.basicConfig(format=_LOGGING_FORMAT, level= esn.logging_level)
-
         self.n_folds = n_folds
         self.fold_length = fold_length
         self.n_training_folds = n_training_folds
@@ -35,13 +44,13 @@ class CrossValidation():
 
         if data is not None:
             self.data_folded_u, self.data_folded_y = self.prepare_k_fold_walk_forward_validation_auto_data(data,
-                                                                                                  esn_start=esn.esn_start,
-                                                                                                  esn_end=esn.esn_end,
-                                                                                                  n_folds=self.n_folds,
-                                                                                                  fold_length=self.fold_length)
+                                                                                                            esn_start=esn.esn_start,
+                                                                                                            esn_end=esn.esn_end,
+                                                                                                            n_folds=self.n_folds,
+                                                                                                            fold_length=self.fold_length)
 
             if self.fold_length is None:
-                self.fold_length = data_folded_u.shape[1]
+                self.fold_length = self.data_folded_u.shape[1]
 
     #--------------------------------------------------------------------------
     #FH 30.03.2022: added prepare_k_fold_walk_forward_validation_auto_data
@@ -70,7 +79,7 @@ class CrossValidation():
         data_esn = data[esn_start-1:esn_end,:]
 
         if fold_length is None:
-            fold_length = int((esn_end - esn_start)/n_folds)     # choose fold_length according to data length
+            fold_length = (esn_end - esn_start)//n_folds     # choose fold_length according to data length
 
         assert esn_end - esn_start  >= n_folds*fold_length, f"Error: Chosen n_folds {n_folds} and fold_length {fold_length} do not fit in specified interval {esn_end - esn_start} steps"
 
@@ -79,6 +88,8 @@ class CrossValidation():
         
         return torch.as_tensor(data_folded_u,dtype=_DTYPE), torch.as_tensor(data_folded_y,dtype=_DTYPE)
 
+
+    #--------------------------------------------------------------------------
 
     def save(self, filepath, f=None):
         ''' Saves the reservoir training, testing and validation data from CrossValidation class object into a hdf5 file.
@@ -92,7 +103,7 @@ class CrossValidation():
             f = h5py.File(filepath, 'a')
             toClose = True
         
-        logging.warn('Saving CrossValidation parameters to Hdf5 file {0}'.format(filepath))
+        logger.warn('Saving CrossValidation parameters to Hdf5 file {0}'.format(filepath))
 
         G_hp = f.get('Hyperparameters')
         G_hp.attrs['n_training_folds'] = self.n_training_folds
@@ -126,7 +137,7 @@ class CrossValidation():
             with h5py.File(filepath,'r') as f:
                 pass
         except:
-            logging.debug('Error: file {0} not found.'.format(filepath))
+            logger.debug('Error: file {0} not found.'.format(filepath))
         
         
         with h5py.File(filepath,'r') as f:

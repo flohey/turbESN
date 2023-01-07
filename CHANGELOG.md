@@ -238,3 +238,27 @@
 - removed iseed argument in read_loss, read_study, read_esn_output in util.py
 - renamed _MSE_DEFAULT to _LOSS_DEFAULT in _modes.py
 - adpated basic_tour.ipynb notebook to new turbESN 
+
+
+## Release 0.0.1.9.2.1
+----------------------
+### 16.11.2022
+- removed reading the loss_func from read method in core.py 
+
+### 04.01.2023
+- run_gs.py checks now whether filepath_esn already exists and does not delete old data
+
+### 05.01.2023
+- adapted to check whether groups already exist in hdf5 file in create_hdf5_groups method in util.py
+- adapted get_size method in core.py to reservoir state matrices
+
+### 07.01.2023
+- use logger for logging, read config from new file: logging_config.json
+- removed iseed arg in save_study, now only take one randomSeed arg
+- adapted parallelize_seeds and parallelize_settings in study.py
+- this now makes it easier to store several grid searches with different seeds (yet same settings) in the same .hdf5 file
+- renamed PrepareTeacherData to prepare_teacher_data in util.py
+- renamed PreparePredictorData to prepare_auto_data in util.py
+- renamed Recursion to recursion in util.py
+- moved recursion inside init_study_order in util.py
+- renmaed calculateLinearNetworkTransmission to calculate_activation_argument in core.py
