@@ -240,7 +240,7 @@
 - adpated basic_tour.ipynb notebook to new turbESN 
 
 
-## Release 0.0.1.9.2.1
+## Release 0.0.1.9.3.0
 ----------------------
 ### 16.11.2022
 - removed reading the loss_func from read method in core.py 
