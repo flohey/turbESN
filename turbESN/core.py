@@ -1010,7 +1010,7 @@ class ESN:
         hdf5_array_save = (np.ndarray,torch.Tensor)
 
         if f is None:
-            f = h5py.File(filepath, 'w')
+            f = h5py.File(filepath, 'a')
             to_close = True
 
         # Save Hyperparameters & Data sets

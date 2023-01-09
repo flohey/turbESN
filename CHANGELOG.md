@@ -262,3 +262,7 @@
 - renamed Recursion to recursion in util.py
 - moved recursion inside init_study_order in util.py
 - renmaed calculateLinearNetworkTransmission to calculate_activation_argument in core.py
+
+## Release 0.0.1.9.3.1
+----------------------
+- fixed open mode in save method in core.py (w->a)
