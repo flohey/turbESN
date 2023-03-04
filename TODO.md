@@ -11,3 +11,6 @@
     - add attribtue in hyperparameters.json: study: true/false
 
 - fix double logging
+
+
+- pack study.py in class w. methods from util.py as member functions -> add mp pool 

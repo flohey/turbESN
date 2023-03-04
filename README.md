@@ -23,7 +23,7 @@ RC is more then just a method, it stands for new computing paradigm (in contrast
 
 The Echo State Network (ESN) is a certain implementation of RC. Its architecture follows a Recurrent Neural Network (RNN) structure, where only the output weights are trained by linear regression. This is also a simple way of circumventing the known exploding/ vanishing gradient problem which RNN suffer from.
 
-## Applications:
+## Our applications:
 - F. Heyder and J. Schumacher - Phys. Rev. E **103**, 053107 (2021):
   "Echo state network for two-dimensional turbulent moist Rayleigh-Bénard convection"
 
@@ -35,4 +35,16 @@ The Echo State Network (ESN) is a certain implementation of RC. Its architecture
 
 - M. S. Ghazijahani, F. Heyder, J. Schumacher and C. Cierpka, Meas. Sci. Technol. **34** (2023) 014002 
   "On the benefits and limitations of Echo State Networks for turbulent flow prediction"
+
+
+## References: ESN good practices
+
+### Getting started
+- M. Lukoševičius - Tricks of the Trade. Lecture Notes in Computer Science, Vol. 7700 (2012): "A Practical Guide to Applying Echo State Networks".
+
+### Cross-Validation
+- M. Lukoševičius and A. Uselis - Cogn. Comput. (2021): "Efficient Implementations of Echo State Network Cross-Validation"
+
+### Random Searches
+- X. Hinaut and N. Trouvain - (2021) Artificial Neural Networks and Machine Learning – ICANN 2021: "Which Hype for My New Task? Hints and Random Search for Echo State Networks Hyperparameter"
 

@@ -273,5 +273,5 @@
 - added KLD as compute_KLD method in util.py
 - added kwarg bins in compute_wasserstein_distance in util.py
 - added get_file_name method to util.py
-- added read_yaml mthod to core.py
+- added read_yaml method to core.py
 - fixed error in save_study in util.py (scalar lossed can now be saved)
