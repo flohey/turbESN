@@ -49,7 +49,7 @@ transientTime: 50
 #---------------------------
 nseed: 24                                        
 do_random_search: False   #random search                                    
-nstudy: 100             #random search
+nsetting: 100             #random search
 
 # Specify HP to be studied (first one moving slowest)
 study_tuple:                     

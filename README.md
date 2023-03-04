@@ -12,6 +12,7 @@ Stable for
 - `torch`  >= 1.10.0
 - `numpy`  >= 1.20.1
 - `h5py`   >= 2.10.0 
+- `pyYAML` >= 6.0
 
 ## Manual
 A first basic introduction can be found in the notbeook`basic_tour.ipynb`.  This example uses data from the Lorenz '63 system (https://en.wikipedia.org/wiki/Lorenz_system).

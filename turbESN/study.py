@@ -3,9 +3,6 @@ from .util import (
     save_study, 
     run_turbESN,
     forward_validate_auto_ESN,
-    compute_wasserstein_distance,
-    compute_mse,
-    compute_nrmse
     )
 
 from .core import ESN
@@ -35,6 +32,9 @@ import json
 
 # Read hyperparameter.json
 import importlib.resources as pkg_resources
+hp_dict_path = '/home/flhe/nextcloud/Promotion/python/esn/github/turbESN/turbESN/hyperparameters.json'
+logging_config_path = '/home/flhe/nextcloud/Promotion/python/esn/github/turbESN/turbESN/logging_config.json'
+
 with pkg_resources.path(__package__,'hyperparameters.json') as hp_dict_path:
     with open(hp_dict_path,'r') as f:
         HP_dict = json.load(f)   
@@ -196,8 +196,8 @@ def callback_seeds(callback_args):
         logger.warn('Saved study for ID {0}.'.format(esn_id))
 
 #--------------------------------------------------------------------------------------------------------
-def parallelize_settings(launch_thread_args) -> Tuple[int, list, int, str]:
-    ''' Launches ThreadPool with maximum of MAX_THREADS threads Each thread runs the same ESN setting, but different RNG seed. 
+def parallelize_settings(launch_thread_args) -> Tuple[int, list, list, str]:
+    ''' Launches ThreadPool with maximum of MAX_THREADS threads. Each thread runs the same ESN setting, but different RNG seed. 
         The ThreadPool is finished when all studies have been run. 
     
     INPUT:
@@ -280,7 +280,6 @@ def callback_settings(callback_args):
     
     esn_id, study_results, seeds, filepath_esn = callback_args
 
-
     if esn_id % _ID_PRINT == 0:
         logger.debug('ID {0}: returning to main process for saving.'.format(esn_id))
 
@@ -299,6 +298,7 @@ def callback_settings(callback_args):
         logger.warn('Saved study for ID {0}.'.format(esn_id))
 
 #--------------------------------------------------------------------------------------------------------
+
 
 #-------------------------------------------------------------------------------------------------
 # CROSS VALIDATION STUDY  (k-fold forward walk validaiton scheme, see Lukosevicius et al. (2021))
@@ -402,38 +402,3 @@ def launch_process_forward_validate_turbESN(launch_thread_args) -> Tuple[int, li
 #-------------------------------------------------------------------------------------------------
 # EXPERIMENTAL
 #-------------------------------------------------------------------------------------------------
-def callback_seeds_postprocess(callback_args):
-    ''' Callback to main process. Use ESN predictions for post-processing.
-        Saves all results of each seed into open hdf5 file f.
-        ESN ID is the identifier for the ESN RNG seed. 
-    INPUT:
-        esn_id        - ESN id
-        randomSeed    - RNG seed of the ESN runs
-        study_results - results of all studies (same RNG seed). Final shape: [RESULTS RUN1, ..., RESULTS RUN nsetting], 
-                        where all RESULTS have shape (istudy, mse_train, mse_test, y_pred, study_dict)
-        nsetting        - no. studies
-        filepath_esn  - path to which the hdf5 file of the ESN study was saved to
-    '''
-    
-    esn_id, randomSeed, study_results, nsetting, filepath_esn = callback_args
-
-    if esn_id % _ID_PRINT == 0:
-        logger.debug('ID {0}: returning to main process for post-processing & saving.'.format(esn_id))
-
-    for ii in range(nsetting):
-        isetting, mse_train, mse_test, mse_val, y_pred_test, y_pred_val, study_dict= study_results[ii] 
-
-        # TO DO
-        # add post processing
-        # fields_true, fields_pred = reconstruct_form_pod(y_true,y_pred_test,spatial_modes)
-        # lta_true, lta_pred = compute_LTA()
-        # nare = compute_NARE(lta_true,lta_pred)
-        # error_dict = {'nare': nare}
-        save_study(filepath=filepath_esn, iseed=esn_id, isetting=isetting,  
-                  study_dict=study_dict, y_pred_test=y_pred_test, y_pred_val=y_pred_val, 
-                  mse_train=mse_train, mse_test=mse_test, mse_val=mse_val,randomSeed=randomSeed) #error_dict
-        
-    if esn_id % _ID_PRINT == 0:        
-        logger.warn('Saved study for ID {0}.'.format(esn_id))
-
-#--------------------------------------------------------------------------------------------------------

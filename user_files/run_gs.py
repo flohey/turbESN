@@ -32,7 +32,9 @@ from turbESN.util import (
     init_grid_search,
     minmax_scaling,
     compute_mse,
-    compute_nrmse
+    compute_nrmse,
+    compute_kld,
+    get_file_name
     )
 from turbESN.core import *
 from turbESN.study import parallelize_seeds, parallelize_settings, callback_seeds, callback_settings
@@ -42,7 +44,8 @@ logging.warning("Using: turbESN v."+turbESN.__version__)
 
 # Load YAML config file
 #---------------------------
-with open("esn_config.yaml","r") as f:
+yaml_config_path = "esn_config.yaml"
+with open(yaml_config_path,"r") as f:
     yaml_config = yaml.safe_load(f)
 #---------------------------
 
@@ -58,42 +61,9 @@ if __name__ == '__main__':
     #1. Load ESN Config 
     #----------------------------------------------------
     print("\nReading yaml-config file.\n")
-
-    # case params
-    #----------------------------
-
-
     # ESN (general)
     #-------------------
-    n_reservoir = yaml_config["n_reservoir"]
-    leakingRate = yaml_config["leakingRate"]
-    spectralRadius =  yaml_config["spectralRadius"]
-    reservoirDensity = yaml_config["reservoirDensity"]
-    regressionParameter = yaml_config["regressionParameter"]
-    mode = yaml_config["mode"]
-    verbose = yaml_config["verbose"]
-
-    bias_in = yaml_config["bias_in"]
-    bias_out = yaml_config["bias_in"]
-    outputInputScaling = yaml_config["outputInputScaling"]
-    inputScaling = yaml_config["inputScaling"]
-    feedbackScaling = yaml_config["feedbackScaling"]
-    inputDensity = yaml_config["inputDensity"]
-    noiseLevel_in = yaml_config["noiseLevel_in"]
-    noiseLevel_out = yaml_config["noiseLevel_out"]
-    extendedStateStyle = yaml_config["extendedStateStyle"]
-    use_feedback = yaml_config["use_feedback"]
-    weightGeneration = yaml_config["weightGeneration"]
-    fit_method = yaml_config["fit_method"]
-
-    # ESN (data layout)
-    #-------------------
-    dataScaling = yaml_config["dataScaling"]
-    trainingLength = yaml_config["trainingLength"]
-    testingLength = yaml_config["testingLength"]
-    validationLength = yaml_config["validationLength"]
-    transientTime = yaml_config["transientTime"]
-    esn_start = yaml_config["esn_start"]
+    esn = ESN.read_yaml(yaml_config_path)
 
     # ESN (study)
     #-------------------
@@ -113,6 +83,7 @@ if __name__ == '__main__':
 
     # Path config
     #-------------------
+    dataScaling = yaml_config["dataScaling"]
     path_data =  yaml_config["path_data"]                      
     filename_data = yaml_config["filename_data"]
     path_esn = yaml_config["path_esn"]                       
@@ -126,24 +97,7 @@ if __name__ == '__main__':
 
     # Prepare filename
     #-------------------
-    data_str =  yaml_config["data_str"]
-    if data_str != "":
-        data_str += "_"
-
-    study_str = ""
-    for param_str in study_tuple:
-        study_str += param_str +"_"
-
-    N_str = f"N{n_reservoir}_"
-    D_str = "D{0:.1}_".format(reservoirDensity).replace('.','')
-    regParam_str = "regParam{0:.1e}_".format(regressionParameter).replace('-','').replace('+','').replace('.','').replace('0','')
-    SR_str = "SR{0:.2}_".format(spectralRadius).replace('.','')
-    LR_str = "LR{0:.2}_".format(leakingRate).replace('.','')
-    dS_str = f"dS{dataScaling}_"
-    esn_start_str = f"esn_start{esn_start}_"
-    TL_str = "TL{0:.1e}".format(trainingLength).replace('-','').replace('+','').replace('.','').replace('0','')
-
-    filename_esn = data_str + study_str + N_str + D_str + SR_str + LR_str + regParam_str + dS_str + esn_start_str + TL_str + '.hdf5'
+    filename_esn = get_file_name(yaml_config_path)
     path_esn = os.path.join(path_esn,subdir_esn)
     os.makedirs(path_esn,exist_ok=True)
     filepath_esn = os.path.join(path_esn,filename_esn)
@@ -171,96 +125,56 @@ if __name__ == '__main__':
     #----------------------------------------------------
     print("Importing data")
     with h5py.File(path_data + filename_data,'r') as f:
-        data = np.array(f["time_coefficients"])
+        data = np.array(f["data"])
 
-    data_timesteps, n_input_data= data.shape
+    esn.data_timesteps, n_input_data= data.shape
     
-    n_input = yaml_config["n_input"]
-    if mode == "auto":
-        n_output = n_input
-        data_in = data[:,:n_input]
-    elif mode == "teacher":
-        try:
-            n_output = yaml_config["n_output"]
-        except KeyError:
-            logging.fatal("In teacher mode: specify n_input & n_output in yaml config.")
-            exit()
+    if esn.mode == "auto":
+        esn.n_output = esn.n_input
 
-    data_in = data[:,:n_input]
-    data_out = data[:,:n_output]
+    data_in  = data[:,:esn.n_input]
+    data_out = data[:,:esn.n_output]
     
-    print(f"Using ESN in mode {mode}")
-    print(f"n_input = {n_input}, n_output = {n_output}\n")
+    print(f"Using ESN in mode {esn.mode}")
+    print(f"n_input = {esn.n_input}, n_output = {esn.n_output}\n")
     # Data parameters
     #------------------
-    esn_end   = esn_start + (trainingLength+testingLength+validationLength)
-    assert esn_end <= data_timesteps, f"esn_end ({esn_end}) must be <= available data timesteps ({data_timesteps})"
+    esn.esn_end   = esn.esn_start + (esn.trainingLength+esn.testingLength+esn.validationLength)
+    assert esn.esn_end <= esn.data_timesteps, f"esn_end ({esn.esn_end}) must be <= available data timesteps ({esn.data_timesteps})"
 
     #normalize data to [-dataScaling,dataScaling] (along time-axis in training phase)
-    x_min_in = np.min(data_in[esn_start:esn_start+trainingLength],axis=0)
-    x_max_in = np.max(data_in[esn_start:esn_start+trainingLength],axis=0)
+    x_min_in = np.min(data_in[esn.esn_start:esn.esn_start+esn.trainingLength],axis=0)
+    x_max_in = np.max(data_in[esn.esn_start:esn.esn_start+esn.trainingLength],axis=0)
     data_in_scaled = minmax_scaling(data_in,x_min=x_min_in,x_max=x_max_in,dataScaling=dataScaling) 
 
-    x_min_out = np.min(data_out[esn_start:esn_start+trainingLength],axis=0)
-    x_max_out = np.max(data_out[esn_start:esn_start+trainingLength],axis=0)
+    x_min_out = np.min(data_out[esn.esn_start:esn.esn_start+esn.trainingLength],axis=0)
+    x_max_out = np.max(data_out[esn.esn_start:esn.esn_start+esn.trainingLength],axis=0)
     data_out_scaled = minmax_scaling(data_out,x_min=x_min_out,x_max=x_max_out,dataScaling=dataScaling) 
 
     #----------------------------------------------------
-    # 5. ESN PARAMETERS
-    # - create ESN
-    # - fix ESN HP
+    # 5. Set ESN Data
     # - set ESN training and testing data
     #----------------------------------------------------
-    esn = ESN(randomSeed = seeds,
-            esn_start = esn_start,
-            esn_end = esn_end,
-            trainingLength=trainingLength,
-            testingLength=testingLength,
-            validationLength=validationLength,
-            data_timesteps = data_timesteps,
-            n_input = n_input,
-            n_output = n_output,
-            n_reservoir = n_reservoir,
-            leakingRate = leakingRate,
-            spectralRadius = spectralRadius,
-            reservoirDensity = reservoirDensity,
-            regressionParameter = regressionParameter,
-            bias_in = bias_in,
-            bias_out = bias_out,
-            outputInputScaling = outputInputScaling,
-            inputScaling = inputScaling,
-            inputDensity = inputDensity,
-            noiseLevel_in = noiseLevel_in,
-            noiseLevel_out = noiseLevel_out,
-            mode = mode,
-            weightGeneration = weightGeneration,
-            extendedStateStyle = extendedStateStyle,
-            transientTime  = transientTime, 
-            use_feedback=use_feedback,
-            feedbackScaling=feedbackScaling,
-            fit_method=fit_method,
-            verbose = verbose)
 
-
-    if mode == "auto":
+    if esn.mode == "auto":
         u_train, y_train, u_test, y_test, u_val, y_val = prepare_auto_data( data=data_in_scaled,
-                                                                            n_input=n_input, 
-                                                                            trainingLength=trainingLength, 
-                                                                            testingLength=testingLength, 
-                                                                            esn_start=esn_start, 
-                                                                            esn_end=esn_end,
-                                                                            validationLength=validationLength)
+                                                                            n_input=esn.n_input, 
+                                                                            trainingLength=esn.trainingLength, 
+                                                                            testingLength=esn.testingLength, 
+                                                                            esn_start=esn.esn_start, 
+                                                                            esn_end=esn.esn_end,
+                                                                            validationLength=esn.validationLength)
 
-    elif mode == "teacher":
+    elif esn.mode == "teacher":
         u_train, y_train, u_test, y_test, u_val, y_val = prepare_teacher_data(  data_in=data_in_scaled,
                                                                                 data_out=data_out_scaled,
-                                                                                n_input=n_input, 
-                                                                                n_output=n_output,
-                                                                                trainingLength=trainingLength, 
-                                                                                testingLength=testingLength, 
-                                                                                esn_start=esn_start, 
-                                                                                esn_end=esn_end,
-                                                                                validationLength=validationLength)
+                                                                                n_input=esn.n_input, 
+                                                                                n_output=esn.n_output,
+                                                                                trainingLength=esn.trainingLength, 
+                                                                                testingLength=esn.testingLength, 
+                                                                                esn_start=esn.esn_start, 
+                                                                                esn_end=esn.esn_end,
+                                                                                validationLength=esn.validationLength)
    
     esn.loss_func=dict(mse=compute_mse,nrmse=compute_nrmse)
     
@@ -318,14 +232,13 @@ if __name__ == '__main__':
                 esn_copy = deepcopy(esn)
                 setting = config[isetting]
                 esn_copy.SetID(esn_id)
-                pool.apply_async(parallelize_settings, args=((esn_copy, filepath_esn, MAX_THREADS, setting, isetting, seeds, study_tuple),), callback=callback_settings(callback_args))
+                pool.apply_async(parallelize_settings, args=((esn_copy, filepath_esn, MAX_THREADS, setting, isetting, seeds, study_tuple),), callback=callback_settings)
             
         pool.close()
         pool.join()
     time_end = time.time()
-    print('----------------------------------------\n')
-    print('PROGRAM FINISHED!')
-    print('(total elapsed time {0:.2f}min)\n'.format((time_end-time_start)/60))
+    print('----------------------------------------')
+    print('PROGRAM FINISHED (elapsed time {0:.2f}min)'.format((time_end-time_start)/60))
     print('----------------------------------------')
 
 #---------------------------------------------------------------------------------------------

@@ -17,6 +17,9 @@ import h5py
 
 
 import importlib.resources as pkg_resources
+#hp_dict_path = '/home/flhe/nextcloud/Promotion/python/esn/github/turbESN/turbESN/hyperparameters.json'
+#logging_config_path = '/home/flhe/nextcloud/Promotion/python/esn/github/turbESN/turbESN/logging_config.json'
+
 with pkg_resources.path(__package__,'logging_config.json') as logging_config_path:
     with open(logging_config_path,'r') as f:
         LOGGING_CONFIG = json.load(f)
@@ -61,7 +64,10 @@ class CrossValidation():
                                                         n_folds: int, 
                                                         fold_length: int = None):
         '''Prepares the data for k fold walk forward validation, see Lukosevicius et al. (2021). Divides the data into n_folds w. length fold_length.
-        The cross validation will use the folds to create three parts: training (incl. transient), validation, testing
+        The cross validation will use the folds to create three parts: 
+        1. training (incl. transient)
+        2. validation (labeled testing here)
+        3. testing (labeled validaiton here)
         For this method n_output = n_input must be valid. 
 
         INPUT:
@@ -81,7 +87,7 @@ class CrossValidation():
         if fold_length is None:
             fold_length = (esn_end - esn_start)//n_folds     # choose fold_length according to data length
 
-        assert esn_end - esn_start  >= n_folds*fold_length, f"Error: Chosen n_folds {n_folds} and fold_length {fold_length} do not fit in specified interval {esn_end - esn_start} steps"
+        assert esn_end - esn_start  >= n_folds*fold_length, f"Error: Chosen n_folds {n_folds} and fold_length {fold_length} do not fit in specified interval of {esn_end - esn_start} steps"
 
         data_folded_u = data_esn[0:int(n_folds*fold_length),:].reshape(n_folds,fold_length,n_input)
         data_folded_y = data_esn[1:int(n_folds*fold_length)+1,:].reshape(n_folds,fold_length,n_input)

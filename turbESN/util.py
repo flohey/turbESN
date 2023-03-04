@@ -11,6 +11,7 @@ import torch
 #save data structure
 import h5py 
 import json
+import yaml
 
 #misc
 import sys
@@ -26,6 +27,9 @@ from scipy.stats import loguniform, uniform
 
 
 # Read hyperparameter.json
+#hp_dict_path = '/home/flhe/nextcloud/Promotion/python/esn/github/turbESN/turbESN/hyperparameters.json'
+#logging_config_path = '/home/flhe/nextcloud/Promotion/python/esn/github/turbESN/turbESN/logging_config.json'
+
 import importlib.resources as pkg_resources
 with pkg_resources.path(__package__,'hyperparameters.json') as hp_dict_path:
     with open(hp_dict_path,'r') as f:
@@ -573,8 +577,6 @@ def run_turbESN(esn,
 #FH 30.03.2022: added forward_validate_auto_ESN 
 def forward_validate_auto_ESN(esn: ESN, cv: CrossValidation):
     ''' Runs ESN with k-fold forward walk validation scheme described in Lukosevicius et al. (2021)
-
-    
     
     INPUT:
         esn    - ESN class object. Contains the reservoir parameters. May contain training, testing and validation data sets.
@@ -743,13 +745,14 @@ def compute_r2(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
     return 1 - res / torch.sum((y_pred - mean)**2, dim = (0,1))
 
 #--------------------------------------------------------------------------
-def compute_wasserstein_distance(y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+def compute_wasserstein_distance(y_true: torch.Tensor, y_pred: torch.Tensor, bins:int = 40) -> torch.Tensor:
     '''
     Computes the Wasserstein distance between target data y_true and prediction data y_pred.
 
     INPUT:
         y_true - validation/testing/ true output
         y_pred - reseroir outputs
+        bins   - no. bins that PDF should have
 
     OUTPUT:
         Wasserstein distance w.r.t. both timestep- & mode-axis.
@@ -758,13 +761,39 @@ def compute_wasserstein_distance(y_true: torch.Tensor, y_pred: torch.Tensor) -> 
 
     logger.debug('Computing Wasserstein Distance')
 
-    hist_test, bins = torch.histogram(y_true, bins = 40)
-    hist_pred,_ = torch.histogram(y_pred, bins = 40, range=(float(bins[0]),float(bins[-1])))
+    hist_true, bins = torch.histogram(y_true, bins=bins)
+    hist_true /= hist_true.sum()
 
-    return wasserstein_distance(hist_pred/torch.sum(hist_test), hist_test/torch.sum(hist_test))
+    hist_pred, _ = torch.histogram(y_pred, bins=bins)
+    hist_pred /= hist_pred.sum()
+    
+    return wasserstein_distance(hist_pred+1e-8, hist_true+1e-8)
 
 #--------------------------------------------------------------------------
-# FH 28.08.2022: added normalized prediction error according to Tanaka et al. Phys. Rev. Res. 4 (2022)
+def compute_kld(y_true: torch.Tensor, y_pred: torch.Tensor, bins: int = 40) -> torch.Tensor:
+    '''
+    Computes the Kullback-Leibler divergence  between target data y_true and prediction data y_pred.
+
+    INPUT:
+        y_true - validation/testing/ true output
+        y_pred - reseroir outputs
+        bins   - no. bins that PDF should have
+
+    OUTPUT:
+        KLD w.r.t. both timestep- & mode-axis.
+    '''
+
+    logger.debug('Computing Kullback-Leibler Divergence')
+
+    hist_true, bins = torch.histogram(y_true, bins=bins)
+    hist_true /= hist_true.sum()
+
+    hist_pred, _ = torch.histogram(y_pred, bins=bins)
+    hist_pred /= hist_pred.sum()
+    
+    return torch.mean(hist_true*torch.log((hist_true + 1e-8)/(hist_pred + 1e-8)))
+
+#--------------------------------------------------------------------------
 def compute_normalized_prediction_error(y_true:torch.Tensor, 
                                         y_pred:torch.Tensor, 
                                         modal_mean:bool=True) -> torch.Tensor:
@@ -797,6 +826,80 @@ def compute_normalized_prediction_error(y_true:torch.Tensor,
 #                            SAVING ESN STUDY
 
 ###########################################################################################################
+
+def get_file_name(yaml_filepath=None)->str:
+    '''
+    Returns suggested filename for grid/random search hdf5 file.
+
+    INPUT:
+        yaml_filepath - path to the yaml config file
+
+    RETURN:
+        filename - suggested filename for study
+    '''
+
+    try:
+        with open(yaml_filepath,'r') as f:
+            yaml_config = yaml.safe_load(f)
+    except FileNotFoundError:
+        logger.debug('Error: file {0} not found.'.format(yaml_filepath))
+        return None
+    
+    # read yaml file
+    data_str = yaml_config["data_str"]
+    study_tuple= yaml_config["study_tuple"]
+    n_reservoir = yaml_config["n_reservoir"]
+    reservoirDensity = yaml_config["reservoirDensity"]
+    regressionParameter = yaml_config["regressionParameter"]
+    spectralRadius = yaml_config["spectralRadius"]
+    leakingRate = yaml_config["leakingRate"]
+    dataScaling = yaml_config["dataScaling"]
+    esn_start = yaml_config["esn_start"]
+    trainingLength = yaml_config["trainingLength"]
+    
+    # prepare strings
+    N_str = ''
+    D_str = ''
+    regParam_str = ''
+    SR_str = ''
+    LR_str = ''
+    
+    study_str = ''
+    for ii,param_str in enumerate(study_tuple):
+        study_str += param_str 
+        if ii < len(study_tuple)-1:
+            study_str += "_"
+
+    if 'n_reservoir' not in study_tuple:
+        N_str = f'N{n_reservoir}'
+    if 'reservoirDensity' not in study_tuple:
+        D_str = 'D{0:.1f}'.format(reservoirDensity).replace('.','')
+    if 'regressionParameter' not in study_tuple:
+        regParam_str = "regParam{0:.1e}".format(regressionParameter).replace('-','').replace('+','').replace('.','').replace('0','')
+    if 'spectralRadius' not in study_tuple:
+        SR_str = "SR{0:.2f}".format(spectralRadius).replace('.','')
+    if 'leakingRate' not in study_tuple:
+        LR_str = "LR{0:.2f}".format(leakingRate).replace('.','')
+
+    DS_str = f'DS{dataScaling}'
+    esn_start_str = f'esn_start{esn_start}'
+    TL_str = 'TL{0:.1e}'.format(trainingLength).replace('-','').replace('+','').replace('.','').replace('0','')
+
+    info = [data_str, study_str,N_str,D_str,SR_str,LR_str,regParam_str,DS_str,esn_start_str,TL_str]
+        
+    # construct filename
+    filename = ''
+    for s,string in enumerate(info):
+        if string == '':
+            continue
+
+        filename += string
+        
+        if s < len(info)-1:
+            filename += '_'
+
+    return filename + '.hdf5'
+#--------------------------------------------------------------------------
 
 def create_hdf5_groups(filepath: str, seeds: Union[int,list,range], nsetting: int):
     '''Initializes the ESN study hdf5 file structure (shown below).  
@@ -854,8 +957,7 @@ def save_study(filepath: str,
               y_pred_val: torch.Tensor,
               loss_dict: dict,
               f =None):
-    '''Saves the ESN parameters from esn_params into a hdf5 file.
-       The h5py file has to be init. with ReadModel (saving the fix parameters) before calling this function!
+    '''Saves the ESN grid-/random search ESN outputs into an hdf5 file.
        
        INPUT:
           filepath    - path to which the hdf5 file of the ESN study is saved to
@@ -936,7 +1038,10 @@ def save_study(filepath: str,
         if loss_label in G_setting:
             del G_setting[loss_label]
         
-        G_setting.create_dataset(loss_label, data=loss_value, compression = 'gzip', compression_opts = 9)
+        if loss_value.flatten().shape[0] > 1:
+            G_setting.create_dataset(loss_label, data=loss_value, compression = 'gzip', compression_opts = 9)
+        else:
+            G_setting.create_dataset(loss_label, data=loss_value)
 
     if to_close:
         f.close()

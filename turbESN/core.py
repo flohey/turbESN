@@ -6,16 +6,21 @@ import numpy as np
 import sys
 import os
 import h5py 
+import yaml
 import json
 from typing import Union, Tuple, List
 import logging
 import logging.config
 
 # Read hyperparameter.json
+#hp_dict_path = '/home/flhe/nextcloud/Promotion/python/esn/github/turbESN/turbESN/hyperparameters.json'
+#logging_config_path = '/home/flhe/nextcloud/Promotion/python/esn/github/turbESN/turbESN/logging_config.json'
+
 import importlib.resources as pkg_resources
 with pkg_resources.path(__package__,'hyperparameters.json') as hp_dict_path:
     with open(hp_dict_path,'r') as f:
         HP_dict = json.load(f) 
+
 with pkg_resources.path(__package__,'logging_config.json') as logging_config_path:
     with open(logging_config_path,'r') as f:
         LOGGING_CONFIG = json.load(f)
@@ -1191,6 +1196,43 @@ class ESN:
 
  #--------------------------------------------------------------------------
     @classmethod
+    def read_yaml(cls, filepath:str):
+        '''
+        Creates an ESN object from a yaml config file.
+
+        INPUT:
+            filepath - path to the saved ESN 
+
+        RETURN:
+            esn - ESN object
+        '''
+
+        logger.warn('Reading ESN parameters from YAML file {0}'.format(filepath))
+
+        try:
+            with open(filepath,"r") as f:
+                yaml_config = yaml.safe_load(f) 
+        except FileNotFoundError:
+            logger.debug('Error: file {0} not found.'.format(filepath))
+            return None
+
+        esn = ESN.vanilla_esn(verbose=yaml_config["verbose"])
+
+        # Read Hyperparameters
+        for key,attr in yaml_config.items():
+            if key in HP_dict.keys():
+                setattr(esn,key,attr)
+
+        # Inferred parameters
+        if esn.extendedStateStyle == _EXTENDED_STATE_STYLES[0]:
+            setattr(esn,'xrows',int(1+esn.n_reservoir+esn.n_input))
+        else:
+            setattr(esn,'xrows',int(1+2*esn.n_reservoir)   )
+
+        return esn
+    
+ #--------------------------------------------------------------------------
+    @classmethod
     def get_HP_info(cls):
         '''
             Prints all hyperparameter information.
@@ -1213,7 +1255,7 @@ class ESN:
 #--------------------------------------------------------------------------
 #--------------------------------------------------------------------------
     @classmethod
-    def vanilla_esn(cls):
+    def vanilla_esn(cls,verbose=False):
 
         esn = cls( randomSeed= 0,
                     esn_start=1, 
@@ -1223,7 +1265,8 @@ class ESN:
                     validationLength=50,
                     data_timesteps=200,
                     n_input=1,
-                    n_output=1)
+                    n_output=1,
+                    verbose=verbose)
 
         return esn
 

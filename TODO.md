@@ -9,3 +9,5 @@
 
 - substitute setters in core.py by HP_DICT
     - add attribtue in hyperparameters.json: study: true/false
+
+- fix double logging
